@@ -3,14 +3,14 @@ module github.com/becomeopc/opc-mailrelay
 go 1.25.0
 
 require (
+	github.com/emersion/go-imap v1.2.1
+	github.com/emersion/go-imap-idle v0.0.0-20210907174914-db2568431445
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.38.2
 )
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/emersion/go-imap v1.2.1 // indirect
-	github.com/emersion/go-imap-idle v0.0.0-20210907174914-db2568431445 // indirect
 	github.com/emersion/go-sasl v0.0.0-20200509203442-7bfe0ed36a21 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
