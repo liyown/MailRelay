@@ -1,0 +1,17 @@
+---
+title: SQLite 持久化
+description: 去重、审计、Queue、Outbox 与 Catalog 的持久化语义。
+---
+
+SQLite 使用 WAL、外键和 busy timeout，适合 MailRelay 的单机部署模型。
+
+| 数据 | 作用 |
+| --- | --- |
+| `processed_messages` | Message-ID 幂等 claim |
+| `executions` | Command、Handler、状态、耗时与安全错误 |
+| `catalog_snapshots` | Canonical Catalog、Hash 和通知状态 |
+| `queue_jobs` | 延迟任务、lease、重试与死信 |
+| `outbox_replies` | SMTP 回复、lease、重试与死信 |
+| `runtime_state` | 最后轮询时间和运行错误 |
+
+执行结果和 SMTP Outbox 在同一事务中写入。SMTP 失败只重试回复，不会重新执行 Handler。

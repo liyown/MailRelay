@@ -1,0 +1,31 @@
+---
+title: 安全模型
+description: 认证、SSRF 防护、危险能力约束与 Secret 处理。
+---
+
+MailRelay 默认不信任任何邮件内容。
+
+## 请求认证
+
+每封邮件必须同时通过：
+
+1. 发件人匹配 `security.allow`。
+2. `X-MailRelay-Token` Header 或 `_token` 参数进行常量时间比较。
+
+认证发生在路由和 Discovery 之前，失败请求不会泄露命令目录。
+
+## HTTP 防护
+
+- 仅允许 HTTPS。
+- 主机必须出现在 `security.http_hosts`。
+- DNS 解析结果拒绝私网、回环、链路本地、组播、未指定和 metadata 地址。
+- 每次拨号和重定向都会重新检查。
+- URL 不允许从邮件参数模板化。
+
+## 本地进程
+
+Plugin 与 Shell 只运行配置中的绝对路径，不经过 shell 解释器。参数逐项扩展，因此 `;`、管道和 `$()` 都只是普通数据。
+
+## 敏感数据
+
+密码、Token、API Key 和完整邮件正文不会进入日志或 SQLite。参数设置 `sensitive: true` 后，审计中保存 `[REDACTED]`。

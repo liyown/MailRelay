@@ -1,0 +1,33 @@
+---
+title: Discovery 与 Catalog
+description: 自动生成 Help、Catalog 与增量变更通知。
+---
+
+Discovery 是 MailRelay 的核心能力。所有内容都来自 Command 定义，不维护第二份命令文档。
+
+## 邮件 Help
+
+`Subject: help` 返回全部命令、成熟度和简短描述。
+
+`Subject: help deploy` 返回：
+
+- 名称和 Description
+- Handler 成熟度
+- 参数说明、必填状态和示例
+
+## 增量 Catalog
+
+启动和有效热加载后，MailRelay 对排序后的 Command 模型计算 SHA-256 Hash，并与 SQLite 快照比较。
+
+```text
+Added
+- summary
+
+Removed
+- backup
+
+Updated
+- deploy
+```
+
+变化会发送给 `runtime.catalog_notify` 管理员，成功后记录已通知状态。

@@ -1,0 +1,42 @@
+---
+title: 介绍
+description: MailRelay 是一个邮件驱动、配置声明、安全可审计的单机自动化运行时。
+---
+
+MailRelay 将 Email 抽象为 Command Protocol。任何可以发送邮件的设备，都可以成为远程控制终端。
+
+```text
+Email → Command → Router → Handler → Execution → Response
+```
+
+它并不把 Email 简化成 HTTP。HTTP 只是 Handler 之一；同一个 Router 还可以驱动 Webhook、Workflow、Queue、Plugin、受限 Shell、AI Agent 和 MCP。
+
+## 为什么用邮件
+
+- 邮件在手机、电脑、脚本和低功能设备上都可用。
+- SMTP/IMAP 是成熟、可审计、跨平台的传输协议。
+- Message-ID 天然适合作为幂等键。
+- 回复邮件可以成为执行结果和故障通知的统一界面。
+
+## 五分钟开始
+
+```bash
+go install github.com/becomeopc/opc-mailrelay/cmd/mailrelay@latest
+mailrelay init
+mailrelay doctor
+mailrelay run
+```
+
+编辑生成的 `mailrelay.yaml`，设置 IMAP、SMTP、Token、发件人 allowlist，再声明第一个 Command。
+
+## 核心保证
+
+| 保证 | 实现 |
+| --- | --- |
+| 只能执行声明的命令 | Router 只读取配置中的 `commands` |
+| 每封邮件最多执行一次 | Message-ID + SQLite 原子 claim |
+| SMTP 失败不重复执行 | 独立 SQLite Outbox |
+| HTTP 不能访问内网 | HTTPS、域名 allowlist、DNS/IP 与重定向检查 |
+| 文档不会漂移 | Help 与 Catalog 从 Command 自描述模型生成 |
+
+下一步从[安装](./getting-started/installation/)开始。

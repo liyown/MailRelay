@@ -1,0 +1,36 @@
+@import '@fontsource-variable/encode-sans';
+
+:root {
+  --sl-font: 'Encode Sans Variable', ui-sans-serif, system-ui, sans-serif;
+  --sl-color-bg: #faf7f0;
+  --sl-color-bg-nav: #faf7f0;
+  --sl-color-bg-sidebar: #faf7f0;
+  --sl-color-bg-inline-code: #f0e9dd;
+  --sl-color-hairline-light: #e4dccb;
+  --sl-color-hairline: #d9cfbc;
+  --sl-color-text: #1a1714;
+  --sl-color-text-accent: #b33210;
+  --sl-color-accent: #b33210;
+  --sl-color-accent-low: #f6e5dd;
+  --sl-color-accent-high: #6e1e09;
+  --sl-content-width: 48rem;
+}
+
+:root[data-theme='dark'] {
+  --sl-color-bg: #171411;
+  --sl-color-bg-nav: #171411;
+  --sl-color-bg-sidebar: #171411;
+  --sl-color-hairline-light: #39322c;
+  --sl-color-text: #f5eee4;
+  --sl-color-text-accent: #e67c58;
+  --sl-color-accent: #e67c58;
+}
+
+.site-title { font-weight: 680; letter-spacing: -.025em; }
+.sidebar-content { font-size: .88rem; }
+.sl-markdown-content h1 { font-size: 2rem; letter-spacing: -.035em; }
+.sl-markdown-content h2 { letter-spacing: -.025em; }
+.sl-markdown-content p, .sl-markdown-content li { line-height: 1.78; }
+.sl-markdown-content pre { border: 1px solid #28231f; border-radius: 8px; background: #0c0b0a !important; box-shadow: 0 18px 45px rgba(45,31,20,.1); }
+.sl-markdown-content table { border-radius: 8px; overflow: hidden; }
+.right-sidebar { font-size: .82rem; }

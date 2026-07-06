@@ -1,0 +1,23 @@
+---
+title: GitHub Pages
+description: 构建并发布静态 MailRelay 文档站。
+---
+
+文档站位于 `docs-site/`，构建输出为静态 HTML：
+
+```bash
+cd docs-site
+pnpm install
+pnpm build
+```
+
+仓库的 `.github/workflows/docs-pages.yml` 在 `main` 变化时执行：
+
+1. 安装 pnpm 和 Node。
+2. 构建 Astro 静态站点。
+3. 上传 `docs-site/dist` Pages Artifact。
+4. 部署到 GitHub Pages。
+
+Astro 会从 `GITHUB_REPOSITORY` 自动推导项目 Pages 的 Base Path，因此 `owner.github.io/repository/` 下的内部链接保持正确。
+
+首次部署前，在仓库 **Settings → Pages → Build and deployment** 中选择 **GitHub Actions**。

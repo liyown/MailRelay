@@ -1,0 +1,36 @@
+---
+title: Workflow 与 Queue
+description: 组合命令、延迟执行和失败恢复。
+---
+
+## Workflow
+
+Workflow 顺序执行配置声明的步骤，并共享总超时。
+
+```yaml
+handler: workflow
+config:
+  steps:
+    - command: build
+    - command: deploy
+      params:
+        env: "{{env}}"
+```
+
+直接递归、空步骤和超过最大步骤数会被拒绝。
+
+## Queue
+
+```yaml
+handler: queue
+config:
+  command: deploy
+  max_attempts: 3
+```
+
+Queue 使用 SQLite lease。Worker 崩溃后，过期 lease 可以被重新 claim；耗尽重试后进入 dead 状态。
+
+```bash
+mailrelay status
+mailrelay replay queue 42
+```

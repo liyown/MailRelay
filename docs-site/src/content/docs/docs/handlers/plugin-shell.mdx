@@ -1,0 +1,30 @@
+---
+title: Plugin 与 Shell
+description: 受控本地扩展和直接进程执行。
+---
+
+## Plugin
+
+Plugin 向固定可执行文件 stdin 写入版本化 JSON，并从 stdout 读取 `Result`。
+
+```yaml
+handler: plugin
+config:
+  executable: /opt/mailrelay/plugins/report
+  args: ["--format", "json"]
+  working_dir: /opt/mailrelay
+```
+
+## Shell
+
+Shell 名称表示本地进程能力，但实现不会启动 `/bin/sh`。
+
+```yaml
+handler: shell
+config:
+  executable: /usr/local/bin/deploy-safe
+  args: ["--env", "{{env}}"]
+  working_dir: /srv/app
+```
+
+只能使用绝对路径。可执行文件不能 world-writable；环境变量必须显式声明。

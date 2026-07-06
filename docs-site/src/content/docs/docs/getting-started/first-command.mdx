@@ -1,0 +1,36 @@
+---
+title: 第一个命令
+description: 声明 HTTP Command 并通过邮件调用。
+---
+
+在 `commands` 中加入：
+
+```yaml
+commands:
+  - name: push
+    description: 发送通知
+    handler: http
+    parameters:
+      message:
+        description: 通知内容
+        type: string
+        required: true
+        example: hello
+    config:
+      method: POST
+      url: https://api.example.com/push
+      body: '{"message":"{{message}}"}'
+```
+
+确保 `api.example.com` 位于 `security.http_hosts`，然后发送：
+
+```text
+Subject: push
+X-MailRelay-Token: your-token
+
+message=hello
+```
+
+MailRelay 会验证发件人和 Token、声明式参数、执行 HTTP Handler、写入 SQLite，再发送带 `In-Reply-To` 的结果邮件。
+
+发送 `Subject: help push` 可以查看这条命令的描述、参数和自动生成的示例。

@@ -1,0 +1,34 @@
+---
+title: HTTP 与 Webhook
+description: Stable 网络 Handler 的配置与安全策略。
+---
+
+## HTTP
+
+```yaml
+handler: http
+config:
+  method: POST
+  url: https://api.example.com/push
+  headers:
+    Content-Type: application/json
+  body: '{"message":"{{message}}"}'
+```
+
+参数只可进入 Body 或固定 Header 值，不能改变 URL scheme 或 authority。响应正文最多读取 1 MiB。
+
+## Webhook
+
+Webhook 发送固定 JSON Envelope：
+
+```json
+{
+  "version": "1",
+  "command": "deploy",
+  "request_id": "message-id",
+  "timestamp": "2026-07-07T10:00:00Z",
+  "params": {"environment": "production"}
+}
+```
+
+配置 `secret` 后添加 `X-MailRelay-Signature: sha256=...` HMAC Header。

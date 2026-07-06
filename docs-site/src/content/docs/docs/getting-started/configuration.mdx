@@ -1,0 +1,50 @@
+---
+title: 配置
+description: 单文件 YAML 配置结构与 Secret 使用方式。
+---
+
+MailRelay 使用一个 YAML 文件。相对的 SQLite 路径以配置文件所在目录为基准。
+
+```yaml
+mail:
+  imap:
+    address: imap.example.com:993
+    username: relay@example.com
+    password: ${IMAP_PASSWORD}
+    mailbox: INBOX
+    poll_interval: 30s
+  smtp:
+    address: smtp.example.com:465
+    username: relay@example.com
+    password: ${SMTP_PASSWORD}
+    from: relay@example.com
+
+security:
+  token: ${MAILRELAY_TOKEN}
+  allow: [me@example.com]
+  http_hosts: [api.example.com]
+
+storage:
+  path: data/mailrelay.db
+
+runtime:
+  command_timeout: 30s
+  config_reload: true
+  catalog_notify: [me@example.com]
+```
+
+## Secret
+
+`${ENV_VAR}` 会在加载配置时展开。变量不存在时启动失败，因此 Secret 不必写入磁盘。
+
+```bash
+export IMAP_PASSWORD='...'
+export SMTP_PASSWORD='...'
+export MAILRELAY_TOKEN='...'
+```
+
+## 热加载
+
+配置变化后执行完整解析、安全校验和 Handler 构建，成功才原子替换。无效配置会被拒绝，当前运行版本继续服务。
+
+未知字段、重复命令、保留名称 `help`、相对可执行路径和未列入 allowlist 的 HTTP 主机会直接报错。

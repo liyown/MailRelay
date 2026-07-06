@@ -2,13 +2,15 @@
 
 ## Goal
 
-Create a static documentation site for MailRelay and deploy it with GitHub Pages. The site must explain the product in five minutes, provide complete operational reference material, and reflect the visual language observed in Nub and Fumadocs without copying their brand assets or text.
+Create a static product landing page plus documentation site for MailRelay and deploy it with GitHub Pages. The Nub-inspired landing page is the primary visual deliverable; the Fumadocs-inspired docs layout supports deeper reference material.
 
 ## Visual Direction
 
 - Warm off-white canvas inspired by Nub (`#faf7f0`) with deep brown-black text and muted sandstone borders.
+- Nub-style landing hero with a narrow sticky navigation, editorial 48px headline, compact install panel, and offset black terminal preview.
+- Landing sections present the protocol flow, handler families, security guarantees, and operational commands as spacious editorial stories rather than a generic card grid.
 - Compact system sans typography with 28px/600 document titles and 24px/600 section headings.
-- Fumadocs-style three-column desktop layout: persistent left navigation, focused article column, right table of contents.
+- Fumadocs-style three-column layout is reserved for `/docs`: persistent left navigation, focused article column, right table of contents.
 - Black terminal/code surfaces with restrained syntax color and 8px radius.
 - Small coral accent for active navigation and important callouts.
 - On mobile, replace side columns with a sticky top bar and one-column article layout.

@@ -1,0 +1,104 @@
+---
+import '../styles/landing.css';
+const base = import.meta.env.BASE_URL;
+const docs = `${base}docs/`;
+---
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="description" content="MailRelay 把 Email 变成安全、可发现、可审计的命令协议。" />
+    <title>MailRelay — Email is the command line</title>
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav" aria-label="主导航">
+        <a class="brand" href={base}>mailrelay.</a>
+        <div class="nav-links"><a href={docs}>文档</a><a href="#handlers">Handlers</a><a href="#security">安全</a></div>
+        <div class="nav-spacer"></div>
+        <a class="github-link" href="https://github.com/becomeopc/opc-mailrelay">GitHub</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div>
+          <span class="eyebrow"><b>NEW</b> single-host automation</span>
+          <h1>Email is the command line for <em>everything</em> you run.</h1>
+          <p class="lead">MailRelay 把每一封经过认证的邮件转换为声明式 Command，再交给安全、可组合的 Handler 执行。任何能发邮件的设备，都可以成为你的远程控制终端。</p>
+          <div class="install" aria-label="安装命令">
+            <div class="install-tabs"><span class="install-tab active">Go</span><span class="install-tab">macOS</span><span class="install-tab">Linux</span></div>
+            <div class="install-command"><span class="prompt">$</span><code>go install github.com/becomeopc/<wbr/>opc-mailrelay/cmd/<wbr/>mailrelay@latest</code></div>
+          </div>
+          <div class="hero-actions"><a href={docs}>阅读文档</a><a href="https://github.com/becomeopc/opc-mailrelay">查看源码</a></div>
+        </div>
+        <div class="terminal" aria-label="MailRelay 命令示例">
+          <div class="terminal-title">mailrelay · live command flow</div>
+          <pre><span class="cmd">Subject</span>   deploy
+<span class="cmd">From</span>      ops@example.com
+<span class="cmd">Token</span>     verified
+
+<span class="comment"># parser</span>     mail → CommandRequest
+<span class="comment"># router</span>     deploy → workflow
+<span class="comment"># handler</span>    3 steps completed
+<span class="comment"># audit</span>      saved to SQLite
+<span class="comment"># response</span>   SMTP reply queued</pre>
+        </div>
+      </section>
+
+      <section class="section" id="protocol">
+        <div class="section-inner">
+          <p class="section-label">The protocol</p>
+          <h2>From inbox to execution, every boundary stays small.</h2>
+          <p class="section-intro">Receiver 不知道 HTTP，Router 不知道邮件，Handler 不知道 IMAP。每层只做一件事，因此新增命令只需要改配置。</p>
+          <div class="protocol">
+            {['Mail|接收原始邮件','Parser|生成请求','Auth|认证与去重','Router|解析命令','Handler|安全执行','Reply|审计并回复'].map((item, i) => {
+              const [title, text] = item.split('|');
+              return <div class="protocol-item"><span class="protocol-index">0{i+1}</span><strong>{title}</strong><span>{text}</span></div>;
+            })}
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="handlers">
+        <div class="section-inner">
+          <p class="section-label">One interface</p>
+          <h2>One Router. Every Handler you need.</h2>
+          <p class="section-intro">从稳定的 HTTP/Webhook 到可组合 Workflow、SQLite Queue，再到受限 Shell、Agent 和 MCP，全部通过统一接口接入。</p>
+          <div class="stories">
+            <article class="story"><span class="story-tag">stable</span><h3>HTTP & Webhook</h3><p>固定 HTTPS 目标、域名白名单、DNS/IP 检查和重定向保护，避免成为 SSRF 工具。</p></article>
+            <article class="story"><span class="story-tag">beta</span><h3>Workflow & Queue</h3><p>组合已声明命令，使用 SQLite lease、有限重试和显式死信重放保持可恢复。</p></article>
+            <article class="story"><span class="story-tag">experimental</span><h3>Plugin & Shell</h3><p>只运行配置声明的绝对路径，不经过 shell 解释器，参数逐项扩展。</p></article>
+            <article class="story"><span class="story-tag">experimental</span><h3>Agent & MCP</h3><p>Endpoint、模型、系统提示和 Tool allowlist 全部由配置固定，邮件无法越权覆盖。</p></article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="security">
+        <div class="section-inner security-layout">
+          <div><p class="section-label">Secure by design</p><h2>Built to be safe by default.</h2><p class="section-intro">危险能力默认关闭。认证、去重、超时、审计和回复重试不是插件，而是运行时的基本行为。</p></div>
+          <ul class="checks">
+            <li><span>01</span><div><strong>双重认证</strong><br/>发件人 allowlist 与常量时间 Token 校验同时通过才会路由。</div></li>
+            <li><span>02</span><div><strong>零重复执行</strong><br/>Message-ID 与 SQLite 原子 claim 在进程重启后仍然有效。</div></li>
+            <li><span>03</span><div><strong>回复与执行解耦</strong><br/>SMTP Outbox 独立重试，不会再次调用 Handler。</div></li>
+            <li><span>04</span><div><strong>可观察、可恢复</strong><br/>status、dead letter、replay 与 72 小时 soak 形成闭环。</div></li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-inner cta">
+          <p class="section-label">Five minutes</p>
+          <h2>Start with one config file.</h2>
+          <p class="section-intro" style="margin-inline:auto">初始化、检查、运行。所有命令、参数和 Discovery 文档都来自同一份 YAML。</p>
+          <div class="terminal" style="max-width:720px;min-height:auto;margin:44px auto 0;text-align:left;transform:none"><pre><span class="cmd">$</span> mailrelay init
+<span class="cmd">$</span> mailrelay doctor
+<span class="cmd">$</span> mailrelay run</pre></div>
+          <div class="cta-links"><a class="button primary" href={docs}>开始使用</a><a class="button" href={`${docs}getting-started/configuration/`}>配置参考</a></div>
+        </div>
+      </section>
+    </main>
+    <footer class="footer"><span>mailrelay. · becomeopc</span><span>Email → Command → Execution → Response</span></footer>
+  </body>
+</html>

@@ -1,0 +1,19 @@
+---
+title: Handler 概览
+description: 内置 Handler、成熟度和统一执行边界。
+---
+
+| Handler | 成熟度 | 用途 |
+| --- | --- | --- |
+| HTTP | Stable | 调用固定 HTTPS API |
+| Webhook | Stable | 发送签名事件 Envelope |
+| Workflow | Beta | 组合多个声明式 Command |
+| Queue | Beta | SQLite 异步任务和有限重试 |
+| Plugin | Experimental | JSON stdin/stdout 本地扩展 |
+| Shell | Experimental | 受限的直接进程执行 |
+| Agent | Experimental | OpenAI-compatible 请求 |
+| MCP | Experimental | allowlist MCP Tool 调用 |
+
+所有 Handler 返回统一 `Result`：状态、摘要、正文、结构化数据、开始时间和耗时。
+
+Experimental 表示配置边界和安全限制仍可能调整，不表示默认启用。

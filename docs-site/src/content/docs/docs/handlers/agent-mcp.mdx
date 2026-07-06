@@ -1,0 +1,32 @@
+---
+title: Agent 与 MCP
+description: 受配置约束的远程智能 Handler。
+---
+
+## Agent
+
+Agent 调用 OpenAI-compatible Chat Completions Endpoint。Endpoint、模型、API Key 和系统提示由配置固定，邮件只提供已声明的 Prompt 参数。
+
+```yaml
+handler: agent
+config:
+  endpoint: https://agent.example.com/v1/chat/completions
+  model: approved-model
+  api_key: ${AGENT_API_KEY}
+  system: 只返回变更摘要
+```
+
+## MCP
+
+MCP 支持配置声明的 HTTP 或 stdio Server，只能调用 `allow_tools` 中的 Tool。
+
+```yaml
+handler: mcp
+config:
+  transport: http
+  url: https://mcp.example.com
+  tool: create_report
+  allow_tools: [create_report]
+```
+
+HTTP Transport 使用与 HTTP Handler 相同的出站网络策略。

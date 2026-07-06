@@ -1,0 +1,18 @@
+@import '@fontsource-variable/encode-sans';
+
+:root {
+  --paper: #faf7f0;
+  --paper-deep: #f1eadf;
+  --ink: #1a1714;
+  --muted: #6b6358;
+  --line: #e4dccb;
+  --accent: #b33210;
+  --terminal: #0c0b0a;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; background: var(--paper); }
+body { margin: 0; color: var(--ink); background: var(--paper); font-family: 'Encode Sans Variable', ui-sans-serif, system-ui, sans-serif; }
+a { color: inherit; text-decoration: none; }
+button, input { font: inherit; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }

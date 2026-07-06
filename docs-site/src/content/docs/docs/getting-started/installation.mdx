@@ -1,0 +1,36 @@
+---
+title: 安装
+description: 安装 MailRelay CLI 并检查版本。
+---
+
+## 通过 Go 安装
+
+MailRelay 需要 Go 1.25 或更新版本。
+
+```bash
+go install github.com/becomeopc/opc-mailrelay/cmd/mailrelay@latest
+mailrelay version
+```
+
+## 从源码构建
+
+```bash
+git clone https://github.com/becomeopc/opc-mailrelay.git
+cd opc-mailrelay
+go build -o bin/mailrelay ./cmd/mailrelay
+./bin/mailrelay version
+```
+
+## 初始化
+
+```bash
+mailrelay init
+```
+
+该命令创建：
+
+- `mailrelay.yaml`：单文件配置。
+- `data/`：SQLite 数据目录。
+- 安全示例命令；不会写入真实密码。
+
+MailRelay 不会覆盖已经存在的配置文件。
