@@ -23,9 +23,11 @@ function initOrama() {
   });
 }
 
+const searchIndexUrl = `${process.env.NEXT_PUBLIC_BASE_PATH ?? ''}/api/search`;
+
 export default function StaticSearchDialog(props: SharedProps) {
   const { search, setSearch, query } = useDocsSearch({
-    client: oramaStaticClient({ initOrama }),
+    client: oramaStaticClient({ from: searchIndexUrl, initOrama }),
   });
   return (
     <SearchDialog search={search} onSearchChange={setSearch} isLoading={query.isLoading} {...props}>

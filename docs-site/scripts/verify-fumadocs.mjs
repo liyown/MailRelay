@@ -27,4 +27,9 @@ for (const token of ["output: 'export'", 'trailingSlash: true', "basePath"]) {
   if (!config.includes(token)) throw new Error(`next config missing: ${token}`);
 }
 
+const search = await readFile(new URL('src/components/search.tsx', root), 'utf8');
+if (!search.includes('NEXT_PUBLIC_BASE_PATH')) {
+  throw new Error('static search does not honor the GitHub Pages base path');
+}
+
 console.log('verified Next.js + Fumadocs static architecture');
