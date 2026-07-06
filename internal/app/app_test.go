@@ -48,3 +48,33 @@ func TestProcessAuthenticatesAndDeduplicates(t *testing.T) {
 		t.Fatalf("calls=%d sends=%d", h.calls, sender.n)
 	}
 }
+
+func TestAuthenticatedHelpMailReturnsGeneratedCatalog(t *testing.T) {
+	st, err := store.Open(t.TempDir() + "/help.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	h := &testHandler{}
+	reg := handler.NewRegistry()
+	_ = reg.Register(h)
+	r, err := router.New([]command.Command{{Name: "deploy", Description: "Deploy application", Handler: "test", Parameters: map[string]command.Parameter{"env": {Description: "Environment", Type: "string", Required: true, Example: "prod"}}}}, reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sender := &testSender{}
+	a := New(st, r, sender, "relay@example.com", []string{"me@example.com"}, "secret")
+	raw := "From: me@example.com\r\nSubject: help deploy\r\nMessage-ID: <help-1>\r\nX-MailRelay-Token: secret\r\n\r\n"
+	if err = a.Process(context.Background(), io.NopCloser(strings.NewReader(raw))); err != nil {
+		t.Fatal(err)
+	}
+	got := string(sender.body)
+	for _, want := range []string{"Deploy application", "Environment", "prod", "In-Reply-To: <help-1>"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in reply:\n%s", want, got)
+		}
+	}
+	if h.calls != 0 {
+		t.Fatalf("help must not invoke handler, calls=%d", h.calls)
+	}
+}
