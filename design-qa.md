@@ -1,49 +1,30 @@
-# Design QA
+# Mobile Documentation Controls Design QA
 
-## Evidence
-
-- Source visual truth:
-  - `/Users/liuyaowen/Documents/MailRelay/design-reference/nubjs-landing-desktop.png`
-  - `/Users/liuyaowen/Documents/MailRelay/design-reference/nubjs-landing-mobile.png`
-  - `/Users/liuyaowen/Documents/MailRelay/design-reference/fumadocs-ui-desktop.png`
-  - `/Users/liuyaowen/Documents/MailRelay/design-reference/fumadocs-ui-mobile.png`
-- Rendered implementation:
-  - `/Users/liuyaowen/Documents/MailRelay/design-reference/mailrelay-landing-desktop.png`
-  - `/Users/liuyaowen/Documents/MailRelay/design-reference/mailrelay-landing-mobile.png`
-  - `/Users/liuyaowen/Documents/MailRelay/design-reference/mailrelay-docs-desktop.png`
-  - `/Users/liuyaowen/Documents/MailRelay/design-reference/mailrelay-docs-mobile.png`
-- Full-view comparison evidence:
-  - `/Users/liuyaowen/Documents/MailRelay/design-reference/qa-landing-desktop.png`
-  - `/Users/liuyaowen/Documents/MailRelay/design-reference/qa-landing-mobile.png`
-  - `/Users/liuyaowen/Documents/MailRelay/design-reference/qa-docs-desktop.png`
-  - `/Users/liuyaowen/Documents/MailRelay/design-reference/qa-docs-mobile.png`
-- Viewports: desktop 2560×1177/1233; mobile 390×844.
-- State: light theme, landing route `/`, introduction route `/docs/`.
+- Source visual truth: `/tmp/codex-remote-attachments/019f385e-2407-7330-86ec-9a6245047902/E57E1C22-1B2D-4757-B63F-E5696B4FCEF7/2-照片-2.jpg` and the live Nub documentation at `https://nubjs.com/docs`
+- Implementation screenshots: `/Users/liuyaowen/Documents/MailRelay/design-reference/mailrelay-docs-controls-mobile.png`, `/Users/liuyaowen/Documents/MailRelay/design-reference/mailrelay-docs-controls-mobile-open.png`, and `/Users/liuyaowen/Documents/MailRelay/design-reference/mailrelay-docs-controls-desktop.png`
+- Full-view comparison: `/Users/liuyaowen/Documents/MailRelay/design-reference/qa-mobile-controls-comparison.jpg`
+- Viewports: 390 × 844 mobile at 2× device scale; 1440 × 900 desktop
+- States: mobile table of contents closed and open; architecture code block and pagination visible; desktop three-column documentation layout
 
 ## Findings
 
-- No actionable P0, P1, or P2 findings remain.
-- Typography: local Encode Sans Variable matches Nub's measured family and editorial weight closely. The MailRelay headline is intentionally shorter and heavier enough to remain legible with mixed Chinese/English copy.
-- Spacing and layout rhythm: desktop hero keeps Nub's offset text/terminal composition, generous top whitespace, 58px sticky navigation, and warm bordered install panel. Mobile collapses to one column without horizontal page overflow.
-- Colors and tokens: warm paper, deep brown-black, sandstone borders, coral accent, and black code surfaces match the captured reference palette. Documentation retains the same tokens inside Starlight's three-column structure.
-- Image quality and assets: neither implementation screen requires illustration or product imagery. No source logo or proprietary asset was copied; the site uses a text wordmark and local open-source font package.
-- Copy and content: all visible copy is MailRelay-specific and reflects current CLI, Handler maturity, SQLite Outbox, security, and recovery behavior.
-- Documentation layout: desktop left navigation, focused article, right table of contents, and mobile single-column collapse match Fumadocs' captured structure. Code blocks are intentionally dark to maintain continuity with the Nub landing page.
+- No actionable P0/P1/P2 findings remain.
+- Typography: Encode Sans remains consistent with the MailRelay brand. Smaller sidebar and UI labels now match Nub's compact documentation rhythm while body content remains readable.
+- Spacing and layout: the mobile TOC uses a compact pill and floating inset menu; pagination is a flat two-column footer instead of two large cards. The desktop layout retains the dense left navigation, centered reading column, and quiet right TOC.
+- Colors and tokens: warm paper background and sandstone rules remain; code now uses warm charcoal `#181513` with high-contrast `#f7eee5` foreground tokens.
+- Image and icon quality: no image assets are required by these controls. Existing Starlight vector icons are retained and rendered sharply; the copy icon is presented in a circular glass control.
+- Copy and content: documentation copy and navigation labels are unchanged; only presentation changed.
+- Responsive behavior: measured document width equals viewport width at 390px, so no horizontal overflow remains. Native TOC, copy, previous, and next interactions are preserved.
 
-## Patches Made During QA
+## Focused comparison
 
-- Added safe word-break opportunities to the long `go install` command.
-- Reduced install command type size and allowed wrapping instead of clipping.
-- Added trailing-slash GitHub Pages base handling.
-- Replaced a root-relative documentation link with a route-relative link.
-- Added static-build verification for normal and `/opc-mailrelay/` base paths.
+Focused evidence was required because the original defects were small UI surfaces. The open-state screenshot verifies the TOC menu treatment, while the mobile full-page screenshot verifies code contrast, copy affordance, and footer navigation together.
 
-## Focused Region Comparison
+## Patches made
 
-The hero was compared separately because typography, terminal sizing, install panel alignment, and whitespace determine most of the Nub-style fidelity. The final implementation keeps the same two-column silhouette on desktop and the same headline → description → install → terminal order on mobile.
-
-## Follow-up Polish
-
-- P3: Add a small MailRelay-specific illustration only if a future brand system provides an approved asset. The current text-and-terminal composition is intentionally asset-free.
+- Replaced the outlined mobile TOC trigger and full-width dropdown with a soft accent pill and inset floating menu.
+- Reworked Expressive Code colors and copy-button states for high contrast and a quieter footprint.
+- Replaced card-style mobile pagination with a flat two-column navigation rail.
+- Tightened desktop sidebar typography and content separators to align more closely with Nub.
 
 final result: passed

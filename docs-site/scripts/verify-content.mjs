@@ -16,6 +16,20 @@ const required = [
   '../.github/workflows/docs-pages.yml',
 ];
 
+const styles = await readFile(new URL('../src/styles/docs.css', import.meta.url), 'utf8');
+const requiredStyleContracts = [
+  'mobile-starlight-toc summary',
+  '.expressive-code .copy button',
+  '--ec-codeFg: #f7eee5',
+  '.pagination-links a',
+];
+
+for (const contract of requiredStyleContracts) {
+  if (!styles.includes(contract)) {
+    throw new Error(`missing documentation style contract: ${contract}`);
+  }
+}
+
 for (const file of required) await access(join(root, file));
 
 const landing = await readFile(join(root, 'src/pages/index.astro'), 'utf8');

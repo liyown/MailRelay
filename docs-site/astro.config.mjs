@@ -13,7 +13,7 @@ export default defineConfig({
       title: 'mailrelay.',
       description: '把 Email 变成安全、可发现、可审计的命令协议。',
       customCss: ['./src/styles/docs.css'],
-      social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/becomeopc/opc-mailrelay' }],
+      social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/liyown/MailRelay' }],
       sidebar: [
         { label: '开始', items: [
           { label: '介绍', slug: 'docs' },
