@@ -51,6 +51,17 @@ type Handler interface {
 	Execute(context.Context, Context) (Result, error)
 }
 
+func HandlerMaturity(name string) string {
+	switch name {
+	case "http", "webhook":
+		return "Stable"
+	case "workflow", "queue":
+		return "Beta"
+	default:
+		return "Experimental"
+	}
+}
+
 type Error struct {
 	Kind, Message string
 	Err           error

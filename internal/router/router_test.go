@@ -54,7 +54,7 @@ func TestRouteAndHelp(t *testing.T) {
 		t.Fatalf("%#v %v", res, err)
 	}
 	res, err = r.Execute(context.Background(), command.Request{Name: "help", Params: map[string]any{"command": "deploy"}})
-	if err != nil || !strings.Contains(res.Body, "Deploy app") || !strings.Contains(res.Body, "Environment") || !strings.Contains(res.Body, "prod") {
+	if err != nil || !strings.Contains(res.Body, "Deploy app") || !strings.Contains(res.Body, "Environment") || !strings.Contains(res.Body, "prod") || !strings.Contains(res.Body, "Maturity: Experimental") {
 		t.Fatalf("%s %v", res.Body, err)
 	}
 }

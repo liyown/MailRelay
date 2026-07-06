@@ -8,13 +8,16 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"time"
 
 	"github.com/becomeopc/opc-mailrelay/internal/app"
+	"github.com/becomeopc/opc-mailrelay/internal/command"
 	"github.com/becomeopc/opc-mailrelay/internal/config"
+	"github.com/becomeopc/opc-mailrelay/internal/security"
 	"github.com/becomeopc/opc-mailrelay/internal/store"
 )
 
@@ -120,6 +123,34 @@ func doctor(path string, out io.Writer) error {
 	}
 	defer s.Close()
 	fmt.Fprintln(out, "sqlite: ok")
+	seenMaturity := map[string]bool{}
+	for _, cmd := range c.Commands {
+		m := command.HandlerMaturity(cmd.Handler)
+		if m != "Stable" && !seenMaturity[cmd.Handler] {
+			fmt.Fprintf(out, "WARNING: %s is %s\n", cmd.Handler, m)
+			seenMaturity[cmd.Handler] = true
+		}
+		if cmd.Handler == "shell" || cmd.Handler == "plugin" {
+			exe, _ := cmd.Config["executable"].(string)
+			st, e := os.Stat(exe)
+			if e != nil {
+				return fmt.Errorf("executable %s: %w", exe, e)
+			}
+			if !st.Mode().IsRegular() {
+				return fmt.Errorf("executable %s is not a regular file", exe)
+			}
+			fmt.Fprintf(out, "executable %s: ok\n", exe)
+		}
+	}
+	policy := security.NetworkPolicy{Hosts: c.Security.HTTPHosts}
+	for _, host := range c.Security.HTTPHosts {
+		u := &url.URL{Scheme: "https", Host: host}
+		if e := policy.Check(context.Background(), u); e != nil {
+			fmt.Fprintf(out, "WARNING: outbound host %s: %v\n", host, e)
+		} else {
+			fmt.Fprintf(out, "outbound host %s: ok\n", host)
+		}
+	}
 	fmt.Fprintf(out, "commands: %d\n", len(c.Commands))
 	return nil
 }

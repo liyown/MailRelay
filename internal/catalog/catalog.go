@@ -13,7 +13,15 @@ import (
 func Build(cmds []command.Command) ([]byte, string) {
 	x := append([]command.Command(nil), cmds...)
 	sort.Slice(x, func(i, j int) bool { return x[i].Name < x[j].Name })
-	b, _ := json.Marshal(x)
+	type catalogCommand struct {
+		command.Command
+		Maturity string `json:"maturity"`
+	}
+	items := make([]catalogCommand, 0, len(x))
+	for _, c := range x {
+		items = append(items, catalogCommand{Command: c, Maturity: command.HandlerMaturity(c.Handler)})
+	}
+	b, _ := json.Marshal(items)
 	s := sha256.Sum256(b)
 	return b, hex.EncodeToString(s[:])
 }

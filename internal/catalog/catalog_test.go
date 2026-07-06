@@ -19,3 +19,11 @@ func TestStableAndDiff(t *testing.T) {
 		t.Fatal(d)
 	}
 }
+
+func TestCatalogContainsHandlerMaturity(t *testing.T) {
+	raw, _ := Build([]command.Command{{Name: "push", Handler: "http"}, {Name: "ask", Handler: "agent"}})
+	s := string(raw)
+	if !strings.Contains(s, `"maturity":"Stable"`) || !strings.Contains(s, `"maturity":"Experimental"`) {
+		t.Fatal(s)
+	}
+}

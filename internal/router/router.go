@@ -69,7 +69,7 @@ func (r *Router) help(req command.Request) command.Result {
 			return command.Result{Status: "error", Summary: "Unknown command", Body: "Unknown command"}
 		}
 		var b strings.Builder
-		fmt.Fprintf(&b, "%s\n\n%s\n\nParameters\n", c.Name, c.Description)
+		fmt.Fprintf(&b, "%s\n\n%s\n\nMaturity: %s\n\nParameters\n", c.Name, c.Description, command.HandlerMaturity(c.Handler))
 		names := make([]string, 0, len(c.Parameters))
 		for k := range c.Parameters {
 			names = append(names, k)
@@ -96,7 +96,7 @@ func (r *Router) help(req command.Request) command.Result {
 	var b strings.Builder
 	b.WriteString("MailRelay Catalog\n\nAvailable Commands\n")
 	for _, n := range names {
-		fmt.Fprintf(&b, "\n%s - %s", n, r.commands[n].Description)
+		fmt.Fprintf(&b, "\n%s [%s] - %s", n, command.HandlerMaturity(r.commands[n].Handler), r.commands[n].Description)
 	}
 	return command.Result{Status: "success", Summary: "Available commands", Body: b.String()}
 }

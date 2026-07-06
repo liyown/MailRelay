@@ -94,3 +94,26 @@ func TestUsageError(t *testing.T) {
 		t.Fatalf("code=%d", code)
 	}
 }
+
+func TestDoctorWarnsForExperimentalHandler(t *testing.T) {
+	d := t.TempDir()
+	cfg := filepath.Join(d, "mailrelay.yaml")
+	var out, errout bytes.Buffer
+	if code := Run(context.Background(), []string{"--config", cfg, "init"}, &out, &errout); code != 0 {
+		t.Fatal(errout.String())
+	}
+	f, err := os.OpenFile(cfg, os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = f.WriteString("\n  - name: local\n    description: local\n    handler: shell\n    config: {executable: /bin/echo}\n")
+	_ = f.Close()
+	out.Reset()
+	errout.Reset()
+	if code := Run(context.Background(), []string{"--config", cfg, "doctor"}, &out, &errout); code != 0 {
+		t.Fatalf("%s", errout.String())
+	}
+	if !strings.Contains(out.String(), "WARNING: shell is Experimental") || !strings.Contains(out.String(), "executable /bin/echo: ok") {
+		t.Fatal(out.String())
+	}
+}
