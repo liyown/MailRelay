@@ -5,3 +5,6 @@ mailrelay.yaml
 *.db
 *.db-shm
 *.db-wal
+design-reference/
+docs-site/node_modules/
+docs-site/dist/
