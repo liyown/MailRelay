@@ -1,0 +1,7 @@
+.worktrees/
+bin/
+data/
+mailrelay.yaml
+*.db
+*.db-shm
+*.db-wal
