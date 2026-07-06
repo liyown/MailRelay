@@ -1,40 +1,22 @@
 import { access, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 
-const root = new URL('..', import.meta.url).pathname;
+const root = new URL('../', import.meta.url);
 const required = [
-  'src/pages/index.astro',
-  'src/content/docs/docs/index.mdx',
-  'src/content/docs/docs/getting-started/installation.mdx',
-  'src/content/docs/docs/getting-started/configuration.mdx',
-  'src/content/docs/docs/concepts/discovery.mdx',
-  'src/content/docs/docs/concepts/security.mdx',
-  'src/content/docs/docs/handlers/index.mdx',
-  'src/content/docs/docs/operations/cli.mdx',
-  'src/content/docs/docs/operations/reliability.mdx',
-  'src/content/docs/docs/operations/github-pages.mdx',
-  '../.github/workflows/docs-pages.yml',
+  'content/docs/index.mdx',
+  'content/docs/getting-started/installation.mdx',
+  'content/docs/getting-started/configuration.mdx',
+  'content/docs/concepts/discovery.mdx',
+  'content/docs/concepts/security.mdx',
+  'content/docs/handlers/index.mdx',
+  'content/docs/operations/cli.mdx',
+  'content/docs/operations/reliability.mdx',
+  'content/docs/operations/github-pages.mdx',
 ];
+for (const file of required) await access(new URL(file, root));
 
-const styles = await readFile(new URL('../src/styles/docs.css', import.meta.url), 'utf8');
-const requiredStyleContracts = [
-  'mobile-starlight-toc summary',
-  '.expressive-code .copy button',
-  '--ec-codeFg: #f7eee5',
-  '.pagination-links a',
-];
-
-for (const contract of requiredStyleContracts) {
-  if (!styles.includes(contract)) {
-    throw new Error(`missing documentation style contract: ${contract}`);
-  }
-}
-
-for (const file of required) await access(join(root, file));
-
-const landing = await readFile(join(root, 'src/pages/index.astro'), 'utf8');
+const landing = await readFile(new URL('src/app/page.tsx', root), 'utf8');
 for (const phrase of ['Email is the command line', 'Built to be safe by default', 'mailrelay run']) {
   if (!landing.includes(phrase)) throw new Error(`landing page is missing: ${phrase}`);
 }
 
-console.log(`verified ${required.length} documentation artifacts`);
+console.log(`verified ${required.length} Fumadocs content artifacts`);

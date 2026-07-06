@@ -1,23 +1,36 @@
 {
   "name": "mailrelay-docs",
+  "version": "0.0.0",
   "private": true,
-  "type": "module",
+  "packageManager": "pnpm@11.7.0",
   "scripts": {
-    "dev": "astro dev",
-    "build": "astro build",
-    "preview": "astro preview",
-    "check": "astro check && node scripts/verify-content.mjs",
-    "check:build": "node scripts/verify-build.mjs"
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "check": "tsc --noEmit && node scripts/verify-fumadocs.mjs && node scripts/verify-content.mjs",
+    "check:build": "node scripts/verify-build.mjs",
+    "postinstall": "fumadocs-mdx"
   },
   "dependencies": {
-    "@astrojs/starlight": "^0.41.3",
-    "@fontsource-variable/encode-sans": "^5.2.8",
-    "astro": "^7.0.6",
-    "sharp": "^0.34.5"
+    "@fontsource-variable/encode-sans": "5.2.8",
+    "@orama/orama": "^3.1.10",
+    "@orama/tokenizers": "^3.1.18",
+    "fumadocs-core": "^16.9.3",
+    "fumadocs-mdx": "^15.0.10",
+    "fumadocs-ui": "^16.9.3",
+    "next": "^16.2.6",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@astrojs/check": "^0.9.6",
-    "typescript": "^5.9.3"
-  },
-  "packageManager": "pnpm@11.7.0"
+    "@tailwindcss/postcss": "^4.3.0",
+    "@types/mdx": "^2.0.13",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^4.3.0",
+    "typescript": "^5.7.2"
+  }
 }
