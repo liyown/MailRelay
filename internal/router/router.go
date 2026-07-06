@@ -101,3 +101,7 @@ func (r *Router) Commands() []command.Command {
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
+func (r *Router) Command(name string) (command.Command, bool) {
+	c, ok := r.commands[name]
+	return c, ok
+}
