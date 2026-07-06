@@ -15,7 +15,18 @@ const required = [
 for (const file of required) await access(new URL(file, root));
 
 const landing = await readFile(new URL('src/app/page.tsx', root), 'utf8');
-for (const phrase of ['Email is the command line', 'Built to be safe by default', 'mailrelay run']) {
+for (const phrase of [
+  'Email is the command line',
+  'Built to be safe by default',
+  'mailrelay run',
+  'Golden scenarios',
+  'The universal remote for everything you run',
+  'Why email wins',
+  'Discovery is the interface',
+  'MailRelay vs. the usual remote controls',
+  'Trust is a runtime feature',
+  'Start with one command',
+]) {
   if (!landing.includes(phrase)) throw new Error(`landing page is missing: ${phrase}`);
 }
 
