@@ -19,6 +19,7 @@ import (
 	"github.com/becomeopc/opc-mailrelay/internal/config"
 	"github.com/becomeopc/opc-mailrelay/internal/security"
 	"github.com/becomeopc/opc-mailrelay/internal/store"
+	"github.com/becomeopc/opc-mailrelay/internal/version"
 )
 
 const usage = `MailRelay - email-driven command runtime
@@ -30,6 +31,8 @@ Usage:
 	mailrelay status [--config path]
 	mailrelay doctor [--config path]
 	mailrelay replay queue|reply ID [--config path]
+	mailrelay soak --duration 72h [--config path]
+	mailrelay version
   mailrelay help
 `
 
@@ -66,6 +69,10 @@ func Run(ctx context.Context, args []string, out, errout io.Writer) int {
 		err = run(ctx, *path)
 	case "replay":
 		err = replay(*path, rest[1:], out)
+	case "soak":
+		err = soak(ctx, *path, rest[1:], out)
+	case "version":
+		fmt.Fprintln(out, version.String())
 	default:
 		fmt.Fprintf(errout, "unknown command %q\n%s", rest[0], usage)
 		return 2
@@ -179,6 +186,19 @@ func status(path string, out io.Writer) error {
 		return err
 	}
 	fmt.Fprintf(out, "reply_pending: %d\nqueue_dead: %d\nreply_dead: %d\n", pendingReplies, queueDead, deadReplies)
+	lastPoll, stateErr := s.State(ctx, "last_poll")
+	if errors.Is(stateErr, sql.ErrNoRows) || lastPoll == "" {
+		lastPoll = "never"
+	} else if stateErr != nil {
+		return stateErr
+	}
+	runtimeErr, stateErr := s.State(ctx, "last_runtime_error")
+	if errors.Is(stateErr, sql.ErrNoRows) || runtimeErr == "" {
+		runtimeErr = "none"
+	} else if stateErr != nil {
+		return stateErr
+	}
+	fmt.Fprintf(out, "last_poll: %s\nruntime_error: %s\n", lastPoll, runtimeErr)
 	if failure, e := s.LatestFailure(ctx); e == nil {
 		fmt.Fprintf(out, "last_error: %s\n", failure)
 	} else if errors.Is(e, sql.ErrNoRows) {
@@ -235,6 +255,45 @@ func replay(path string, args []string, out io.Writer) error {
 		fmt.Fprintf(out, "replayed %s %d\n", args[0], id)
 	}
 	return err
+}
+func soak(parent context.Context, path string, args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("soak", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	duration := fs.Duration("duration", 72*time.Hour, "soak duration")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *duration < 0 {
+		return fmt.Errorf("duration must not be negative")
+	}
+	r, err := app.Build(path)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+	ctx, cancel := context.WithTimeout(parent, *duration)
+	defer cancel()
+	started := time.Now()
+	if err = r.Run(ctx); err != nil {
+		return err
+	}
+	queueDead, replyDead, err := r.Store().DeadCounts(context.Background())
+	if err != nil {
+		return err
+	}
+	pendingReplies, _, err := r.Store().ReplyCounts(context.Background())
+	if err != nil {
+		return err
+	}
+	result := "pass"
+	if queueDead > 0 || replyDead > 0 || pendingReplies > 0 {
+		result = "fail"
+	}
+	fmt.Fprintf(out, "duration: %s\nobserved: %s\nqueue_dead: %d\nreply_dead: %d\nreply_pending: %d\nsoak_result: %s\n", duration.String(), time.Since(started).Round(time.Millisecond), queueDead, replyDead, pendingReplies, result)
+	if result != "pass" {
+		return fmt.Errorf("soak invariants failed")
+	}
+	return nil
 }
 func runOnce(ctx context.Context, path string) error {
 	r, err := app.Build(path)

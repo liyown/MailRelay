@@ -95,6 +95,27 @@ func TestUsageError(t *testing.T) {
 	}
 }
 
+func TestVersionAndZeroDurationSoak(t *testing.T) {
+	var out, errout bytes.Buffer
+	if code := Run(context.Background(), []string{"version"}, &out, &errout); code != 0 || !strings.Contains(out.String(), "mailrelay dev") {
+		t.Fatalf("%s %s", out.String(), errout.String())
+	}
+	d := t.TempDir()
+	cfg := filepath.Join(d, "mailrelay.yaml")
+	out.Reset()
+	if code := Run(context.Background(), []string{"--config", cfg, "init"}, &out, &errout); code != 0 {
+		t.Fatal(errout.String())
+	}
+	out.Reset()
+	errout.Reset()
+	if code := Run(context.Background(), []string{"--config", cfg, "soak", "--duration", "0s"}, &out, &errout); code != 0 {
+		t.Fatalf("%s", errout.String())
+	}
+	if !strings.Contains(out.String(), "soak_result: pass") || !strings.Contains(out.String(), "duration: 0s") {
+		t.Fatal(out.String())
+	}
+}
+
 func TestDoctorWarnsForExperimentalHandler(t *testing.T) {
 	d := t.TempDir()
 	cfg := filepath.Join(d, "mailrelay.yaml")

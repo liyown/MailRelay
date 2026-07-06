@@ -107,15 +107,21 @@ func (r *Runtime) Once(ctx context.Context) error {
 			break
 		}
 	}
+	_ = r.store.SetState(ctx, "last_poll", time.Now().UTC().Format(time.RFC3339))
+	_ = r.store.SetState(ctx, "last_runtime_error", "")
 	return nil
 }
 func (r *Runtime) Run(ctx context.Context) error {
 	backoff := time.Second
 	for {
+		if ctx.Err() != nil {
+			return nil
+		}
 		if err := r.reloadIfChanged(ctx); err != nil {
 			slog.Error("configuration reload rejected", "error", err)
 		}
 		if err := r.Once(ctx); err != nil {
+			_ = r.store.SetState(context.Background(), "last_runtime_error", err.Error())
 			slog.Error("mail poll failed", "error", err)
 			select {
 			case <-ctx.Done():

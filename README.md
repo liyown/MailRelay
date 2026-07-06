@@ -72,6 +72,12 @@ Parameter types are `string`, `integer`, `number`, and `boolean`. Mark a paramet
 
 All handlers implement the same consumer-side interface. The Router only resolves the configured handler name.
 
+Support levels are part of generated Discovery output:
+
+- **Stable:** `http`, `webhook` — supported for the v0.1 golden path.
+- **Beta:** `workflow`, `queue` — suitable for controlled use with audit monitoring.
+- **Experimental:** `plugin`, `shell`, `agent`, `mcp`, and custom handlers — APIs and safety limits may still change.
+
 ### `http`
 
 Calls a fixed HTTPS URL. The hostname must be listed in `security.http_hosts`. URL templates are forbidden. Resolved private, loopback, link-local, multicast, unspecified, carrier-grade NAT, and metadata addresses are rejected at validation and dial time. Cross-host redirects are rejected.
@@ -118,6 +124,10 @@ mailrelay run      run IMAP IDLE, polling fallback, queue worker, and hot reload
 mailrelay once     process one bounded mail and queue batch
 mailrelay status   show queue depth, Catalog hash, and latest execution
 mailrelay doctor   validate configuration, addresses, SQLite, and command policies
+mailrelay replay queue ID  replay one dead queue job
+mailrelay replay reply ID  replay one dead SMTP reply
+mailrelay soak --duration 72h  run the live reliability acceptance check
+mailrelay version  print version, commit, and build time
 mailrelay help     print CLI usage
 ```
 
@@ -130,6 +140,8 @@ Use `--config path` before or after the command, or set `MAILRELAY_CONFIG`.
 - Unknown configuration fields, duplicate commands, invalid parameter types, relative executables, and unallowlisted HTTP hosts fail startup.
 - Configuration reload is parse/validate/build/atomic-swap. Invalid changes are logged and the last valid configuration remains active.
 - IMAP prefers IDLE and falls back to bounded polling/reconnect backoff.
+- Command execution and SMTP delivery are separated by a durable SQLite outbox. SMTP retry never executes a Handler twice.
+- Exhausted queue jobs and replies remain in dead-letter state until an operator uses `mailrelay replay`.
 - Logs and SQLite never store tokens, mailbox passwords, API keys, or full mail bodies.
 - Back up the YAML file and SQLite database together while MailRelay is stopped, or use SQLite's online backup tooling.
 
@@ -143,3 +155,14 @@ go build ./cmd/mailrelay
 ```
 
 The architecture and accepted security boundaries are documented in `docs/superpowers/specs/2026-07-07-mailrelay-design.md`.
+
+## 72-hour acceptance run
+
+Use a dedicated mailbox and one Stable HTTP/Webhook command. Start with an empty queue and outbox:
+
+```bash
+mailrelay doctor
+mailrelay soak --duration 72h
+```
+
+During the run, send valid commands, one unauthorized command, duplicate `Message-ID` messages, and temporarily interrupt IMAP, SMTP, and the target HTTP endpoint. Acceptance requires `soak_result: pass`, no unauthorized or duplicate execution in the audit, and no pending/dead reply or queue item. If a deliberate outage exhausts retries, inspect `mailrelay status`, repair the dependency, and explicitly replay the dead item before restarting the acceptance window.
