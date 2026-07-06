@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/becomeopc/opc-mailrelay/internal/app"
@@ -25,6 +26,7 @@ Usage:
 	mailrelay once [--config path]
 	mailrelay status [--config path]
 	mailrelay doctor [--config path]
+	mailrelay replay queue|reply ID [--config path]
   mailrelay help
 `
 
@@ -59,6 +61,8 @@ func Run(ctx context.Context, args []string, out, errout io.Writer) int {
 		err = runOnce(ctx, *path)
 	case "run":
 		err = run(ctx, *path)
+	case "replay":
+		err = replay(*path, rest[1:], out)
 	default:
 		fmt.Fprintf(errout, "unknown command %q\n%s", rest[0], usage)
 		return 2
@@ -135,6 +139,22 @@ func status(path string, out io.Writer) error {
 		return err
 	}
 	fmt.Fprintf(out, "queue_depth: %d\n", depth)
+	pendingReplies, deadReplies, err := s.ReplyCounts(ctx)
+	if err != nil {
+		return err
+	}
+	queueDead, _, err := s.DeadCounts(ctx)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "reply_pending: %d\nqueue_dead: %d\nreply_dead: %d\n", pendingReplies, queueDead, deadReplies)
+	if failure, e := s.LatestFailure(ctx); e == nil {
+		fmt.Fprintf(out, "last_error: %s\n", failure)
+	} else if errors.Is(e, sql.ErrNoRows) {
+		fmt.Fprintln(out, "last_error: none")
+	} else {
+		return e
+	}
 	hash, _, notified, err := s.Catalog(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
 		hash = "not initialized"
@@ -154,6 +174,36 @@ func status(path string, out io.Writer) error {
 	}
 	fmt.Fprintf(out, "last_execution: %s %s %s\n", e.Command, e.Status, e.StartedAt.Format(time.RFC3339))
 	return nil
+}
+func replay(path string, args []string, out io.Writer) error {
+	if len(args) != 2 {
+		return fmt.Errorf("usage: mailrelay replay queue|reply ID")
+	}
+	id, err := strconv.ParseInt(args[1], 10, 64)
+	if err != nil || id < 1 {
+		return fmt.Errorf("invalid ID %q", args[1])
+	}
+	c, err := config.Load(path)
+	if err != nil {
+		return err
+	}
+	s, err := store.Open(c.Storage.Path)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	switch args[0] {
+	case "queue":
+		err = s.ReplayJob(context.Background(), id)
+	case "reply":
+		err = s.ReplayReply(context.Background(), id)
+	default:
+		return fmt.Errorf("replay type must be queue or reply")
+	}
+	if err == nil {
+		fmt.Fprintf(out, "replayed %s %d\n", args[0], id)
+	}
+	return err
 }
 func runOnce(ctx context.Context, path string) error {
 	r, err := app.Build(path)

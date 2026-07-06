@@ -90,6 +90,15 @@ func (r *Runtime) Once(ctx context.Context) error {
 		return err
 	}
 	for i := 0; i < 100; i++ {
+		worked, err := a.RunOneReply(ctx)
+		if err != nil {
+			return err
+		}
+		if !worked {
+			break
+		}
+	}
+	for i := 0; i < 100; i++ {
 		worked, err := handler.RunOneJob(ctx, r.store, a, 30*time.Second)
 		if err != nil {
 			return err

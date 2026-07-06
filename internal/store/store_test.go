@@ -7,6 +7,44 @@ import (
 	"time"
 )
 
+func TestReplyOutboxLeaseRetryAndDeadLetter(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "outbox.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	id, err := s.RecordExecutionAndReply(ctx, Execution{MessageID: "m1", Command: "push", Handler: "http", Status: "success", StartedAt: time.Now()}, nil, "me@example.com", []byte("reply"), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.ClaimReply(ctx, time.Now(), time.Minute)
+	if err != nil || r == nil || r.ID != id {
+		t.Fatalf("%#v %v", r, err)
+	}
+	if err = s.FailReply(ctx, r, "smtp down", 0); err != nil {
+		t.Fatal(err)
+	}
+	r, err = s.ClaimReply(ctx, time.Now().Add(time.Second), time.Minute)
+	if err != nil || r == nil {
+		t.Fatalf("%#v %v", r, err)
+	}
+	if err = s.FailReply(ctx, r, "still down", 0); err != nil {
+		t.Fatal(err)
+	}
+	pending, dead, err := s.ReplyCounts(ctx)
+	if err != nil || pending != 0 || dead != 1 {
+		t.Fatalf("pending=%d dead=%d err=%v", pending, dead, err)
+	}
+	if err = s.ReplayReply(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	pending, dead, err = s.ReplyCounts(ctx)
+	if err != nil || pending != 1 || dead != 0 {
+		t.Fatalf("pending=%d dead=%d err=%v", pending, dead, err)
+	}
+}
+
 func TestClaimsPersistAndQueue(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "relay.db")
 	s, err := Open(p)
@@ -57,5 +95,40 @@ func TestCatalogAndRuntime(t *testing.T) {
 	v, err := s.State(ctx, "last_poll")
 	if err != nil || v != "now" {
 		t.Fatalf("%s %v", v, err)
+	}
+}
+
+func TestQueueDeadLetterReplayAndLatestFailure(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "dead.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	id, err := s.Enqueue(ctx, "deploy", nil, "dead-key", 1, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, err := s.ClaimJob(ctx, time.Now(), time.Minute)
+	if err != nil || j == nil {
+		t.Fatalf("%#v %v", j, err)
+	}
+	if err = s.FailJob(ctx, j, "boom", 0); err != nil {
+		t.Fatal(err)
+	}
+	qd, rd, err := s.DeadCounts(ctx)
+	if err != nil || qd != 1 || rd != 0 {
+		t.Fatalf("queue=%d reply=%d err=%v", qd, rd, err)
+	}
+	failure, err := s.LatestFailure(ctx)
+	if err != nil || failure != "queue: boom" {
+		t.Fatalf("%q %v", failure, err)
+	}
+	if err = s.ReplayJob(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	depth, err := s.QueueDepth(ctx)
+	if err != nil || depth != 1 {
+		t.Fatalf("depth=%d err=%v", depth, err)
 	}
 }

@@ -17,17 +17,18 @@ import (
 )
 
 type App struct {
-	mu     sync.RWMutex
-	store  *store.Store
-	router *router.Router
-	sender mailbox.Sender
-	from   string
-	allow  []string
-	token  string
+	mu           sync.RWMutex
+	store        *store.Store
+	router       *router.Router
+	sender       mailbox.Sender
+	from         string
+	allow        []string
+	token        string
+	replyBackoff time.Duration
 }
 
 func New(s *store.Store, r *router.Router, sender mailbox.Sender, from string, allow []string, token string) *App {
-	return &App{store: s, router: r, sender: sender, from: from, allow: allow, token: token}
+	return &App{store: s, router: r, sender: sender, from: from, allow: allow, token: token, replyBackoff: time.Minute}
 }
 func (a *App) Process(ctx context.Context, raw io.ReadCloser) error {
 	defer raw.Close()
@@ -58,19 +59,49 @@ func (a *App) Process(ctx context.Context, raw io.ReadCloser) error {
 	if res.Status == "" {
 		res.Status = status
 	}
-	_, auditErr := a.store.AddExecution(ctx, store.Execution{MessageID: m.Request.MessageID, Command: m.Request.Name, Status: status, Summary: res.Summary, Error: safeErr, StartedAt: started, Duration: time.Since(started)}, m.Request.Params)
-	if auditErr != nil {
-		return auditErr
-	}
 	reply, err := mailbox.BuildReply(from, m.Request.Sender, m.Request.InReplyTo, m.Request.Name, res)
 	if err != nil {
 		return err
 	}
-	if err = sender.Send(ctx, m.Request.Sender, reply); err != nil {
-		_ = a.store.MarkMessage(ctx, m.Request.MessageID, status, true)
+	handlerName := "builtin"
+	if c, ok := route.Command(m.Request.Name); ok {
+		handlerName = c.Handler
+	}
+	id, err := a.store.RecordExecutionAndReply(ctx, store.Execution{MessageID: m.Request.MessageID, Command: m.Request.Name, Handler: handlerName, Status: status, Summary: res.Summary, Error: safeErr, StartedAt: started, Duration: time.Since(started)}, m.Request.Params, m.Request.Sender, reply, 5)
+	if err != nil {
 		return err
 	}
-	return a.store.MarkMessage(ctx, m.Request.MessageID, status, false)
+	_, err = a.deliverReply(ctx, id, sender)
+	return err
+}
+func (a *App) deliverReply(ctx context.Context, id int64, sender mailbox.Sender) (bool, error) {
+	r, err := a.store.ClaimReplyID(ctx, id, time.Now(), 30*time.Second)
+	if err != nil || r == nil {
+		return false, err
+	}
+	if err = sender.Send(ctx, r.Recipient, r.Payload); err != nil {
+		if e := a.store.FailReply(ctx, r, err.Error(), a.replyBackoff); e != nil {
+			return true, e
+		}
+		return true, nil
+	}
+	return true, a.store.CompleteReply(ctx, r)
+}
+func (a *App) RunOneReply(ctx context.Context) (bool, error) {
+	a.mu.RLock()
+	sender := a.sender
+	a.mu.RUnlock()
+	r, err := a.store.ClaimReply(ctx, time.Now(), 30*time.Second)
+	if err != nil || r == nil {
+		return false, err
+	}
+	if err = sender.Send(ctx, r.Recipient, r.Payload); err != nil {
+		if e := a.store.FailReply(ctx, r, err.Error(), a.replyBackoff); e != nil {
+			return true, e
+		}
+		return true, nil
+	}
+	return true, a.store.CompleteReply(ctx, r)
 }
 func (a *App) ReplaceRouter(r *router.Router) { a.mu.Lock(); a.router = r; a.mu.Unlock() }
 func (a *App) ReplaceSecurity(from string, allow []string, token string) {
