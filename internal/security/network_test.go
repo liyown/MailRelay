@@ -3,8 +3,10 @@ package security
 import (
 	"context"
 	"net"
+	"net/http"
 	"net/url"
 	"testing"
+	"time"
 )
 
 func TestNetworkPolicy(t *testing.T) {
@@ -20,5 +22,15 @@ func TestNetworkPolicy(t *testing.T) {
 	u, _ = url.Parse("http://api.example.com")
 	if err := p.Check(context.Background(), u); err == nil {
 		t.Fatal("expected https denial")
+	}
+}
+
+func TestProtectedClientRejectsCrossHostRedirect(t *testing.T) {
+	p := NetworkPolicy{Hosts: []string{"api.example.com", "other.example.com"}}
+	c := p.HTTPClient(time.Second)
+	first, _ := http.NewRequest("GET", "https://api.example.com/start", nil)
+	next, _ := http.NewRequest("GET", "https://other.example.com/end", nil)
+	if err := c.CheckRedirect(next, []*http.Request{first}); err == nil {
+		t.Fatal("expected cross-host redirect denial")
 	}
 }

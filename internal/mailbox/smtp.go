@@ -17,9 +17,12 @@ type Sender interface {
 	Send(context.Context, string, []byte) error
 	Notify(context.Context, []string, string, string) error
 }
-type SMTPSender struct{ cfg config.MailEndpoint }
+type SMTPSender struct {
+	cfg       config.MailEndpoint
+	tlsConfig *tls.Config
+}
 
-func NewSMTP(c config.MailEndpoint) *SMTPSender { return &SMTPSender{c} }
+func NewSMTP(c config.MailEndpoint) *SMTPSender { return &SMTPSender{cfg: c} }
 func BuildReply(from, to, inReplyTo, name string, res command.Result) ([]byte, error) {
 	for _, v := range []string{from, to, inReplyTo, name, res.Status} {
 		if strings.ContainsAny(v, "\r\n") {
@@ -55,7 +58,19 @@ func (s *SMTPSender) send(ctx context.Context, to []string, msg []byte) error {
 		return err
 	}
 	d := &net.Dialer{}
-	conn, err := tls.DialWithDialer(d, "tcp", s.cfg.Address, &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12})
+	tlsCfg := s.tlsConfig
+	if tlsCfg == nil {
+		tlsCfg = &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}
+	} else {
+		tlsCfg = tlsCfg.Clone()
+		if tlsCfg.ServerName == "" {
+			tlsCfg.ServerName = host
+		}
+		if tlsCfg.MinVersion == 0 {
+			tlsCfg.MinVersion = tls.VersionTLS12
+		}
+	}
+	conn, err := tls.DialWithDialer(d, "tcp", s.cfg.Address, tlsCfg)
 	if err != nil {
 		return err
 	}

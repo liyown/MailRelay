@@ -21,11 +21,23 @@ type Receiver interface {
 	MarkSeen(context.Context, uint32) error
 	Idle(context.Context) error
 }
-type IMAPReceiver struct{ cfg config.MailEndpoint }
+type IMAPReceiver struct {
+	cfg       config.MailEndpoint
+	tlsConfig *tls.Config
+}
 
-func NewIMAP(c config.MailEndpoint) *IMAPReceiver { return &IMAPReceiver{c} }
+func NewIMAP(c config.MailEndpoint) *IMAPReceiver { return &IMAPReceiver{cfg: c} }
 func (i *IMAPReceiver) connect() (*client.Client, error) {
-	c, err := client.DialTLS(i.cfg.Address, &tls.Config{MinVersion: tls.VersionTLS12})
+	tlsCfg := i.tlsConfig
+	if tlsCfg == nil {
+		tlsCfg = &tls.Config{MinVersion: tls.VersionTLS12}
+	} else {
+		tlsCfg = tlsCfg.Clone()
+		if tlsCfg.MinVersion == 0 {
+			tlsCfg.MinVersion = tls.VersionTLS12
+		}
+	}
+	c, err := client.DialTLS(i.cfg.Address, tlsCfg)
 	if err != nil {
 		return nil, err
 	}
