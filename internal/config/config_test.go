@@ -40,6 +40,7 @@ func TestLoadRejectsInvalidConfiguration(t *testing.T) {
 		"security: {token: '${MISSING}'}\n",
 		"security: {token: x, allow: [a@b]}\ncommands: [{name: help, handler: http}]\n",
 		"security: {token: x, allow: [a@b]}\ncommands: [{name: x, handler: shell, config: {executable: relative}}]\n",
+		"security: {token: x, allow: [a@b], surprise: true}\n",
 	}
 	for _, body := range cases {
 		t.Run(strings.Split(body, "\n")[0], func(t *testing.T) {

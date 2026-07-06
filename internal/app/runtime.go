@@ -72,6 +72,11 @@ func buildRouter(cfg *config.Config, s *store.Store, custom []command.Handler) (
 		}
 	}
 	r, err := router.New(cfg.Commands, reg)
+	if err == nil {
+		if d, e := time.ParseDuration(cfg.Runtime.CommandTimeout); e == nil && d > 0 {
+			r.SetTimeout(d)
+		}
+	}
 	return reg, r, err
 }
 func (r *Runtime) Close() error        { return r.store.Close() }

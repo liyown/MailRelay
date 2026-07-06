@@ -6,6 +6,7 @@ import (
 	"github.com/becomeopc/opc-mailrelay/internal/handler"
 	"strings"
 	"testing"
+	"time"
 )
 
 type capture struct{ got command.Context }
@@ -14,6 +15,30 @@ func (c *capture) Name() string { return "capture" }
 func (c *capture) Execute(_ context.Context, x command.Context) (command.Result, error) {
 	c.got = x
 	return command.Result{Status: "success", Summary: "done"}, nil
+}
+
+type blocking struct{}
+
+func (blocking) Name() string { return "blocking" }
+func (blocking) Execute(ctx context.Context, _ command.Context) (command.Result, error) {
+	<-ctx.Done()
+	return command.Result{}, ctx.Err()
+}
+func TestRouteAppliesTimeout(t *testing.T) {
+	reg := handler.NewRegistry()
+	_ = reg.Register(blocking{})
+	r, err := New([]command.Command{{Name: "wait", Handler: "blocking"}}, reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.SetTimeout(10 * time.Millisecond)
+	started := time.Now()
+	if _, err = r.Execute(context.Background(), command.Request{Name: "wait"}); err == nil {
+		t.Fatal("expected timeout")
+	}
+	if time.Since(started) > time.Second {
+		t.Fatal("timeout not applied")
+	}
 }
 func TestRouteAndHelp(t *testing.T) {
 	h := &capture{}

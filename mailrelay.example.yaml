@@ -1,0 +1,20 @@
+mail:
+  imap: {address: "imap.example.com:993", username: "relay@example.com", password: "${IMAP_PASSWORD}", mailbox: INBOX, poll_interval: 30s}
+  smtp: {address: "smtp.example.com:465", username: "relay@example.com", password: "${SMTP_PASSWORD}", from: "relay@example.com"}
+security:
+  token: "${MAILRELAY_TOKEN}"
+  allow: ["me@example.com"]
+  http_hosts: ["api.example.com", "agent.example.com", "mcp.example.com"]
+storage: {path: "data/mailrelay.db"}
+runtime: {command_timeout: 30s, config_reload: true, catalog_notify: ["me@example.com"]}
+handlers: {}
+commands:
+  - name: push
+    description: Send a notification
+    handler: http
+    parameters:
+      message: {description: Notification text, type: string, required: true, example: hello}
+    config:
+      method: POST
+      url: https://api.example.com/push
+      body: '{"message":"{{message}}"}'

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"fmt"
 	"github.com/becomeopc/opc-mailrelay/internal/config"
 	"github.com/emersion/go-imap"
 	idle "github.com/emersion/go-imap-idle"
@@ -112,5 +111,3 @@ func (i *IMAPReceiver) Idle(ctx context.Context) error {
 	}
 }
 func RawReader(m RawMessage) io.ReadCloser { return io.NopCloser(bytes.NewReader(m.Body)) }
-
-var _ = fmt.Sprintf

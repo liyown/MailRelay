@@ -13,10 +13,11 @@ import (
 type Router struct {
 	commands map[string]command.Command
 	registry *handler.Registry
+	timeout  time.Duration
 }
 
 func New(cmds []command.Command, reg *handler.Registry) (*Router, error) {
-	r := &Router{commands: map[string]command.Command{}, registry: reg}
+	r := &Router{commands: map[string]command.Command{}, registry: reg, timeout: 30 * time.Second}
 	for _, c := range cmds {
 		if c.Name == "help" {
 			return nil, fmt.Errorf("help is reserved")
@@ -32,6 +33,11 @@ func New(cmds []command.Command, reg *handler.Registry) (*Router, error) {
 	return r, nil
 }
 func (r *Router) Execute(ctx context.Context, req command.Request) (res command.Result, err error) {
+	if r.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, r.timeout)
+		defer cancel()
+	}
 	started := time.Now()
 	defer func() {
 		res.StartedAt = started
@@ -55,6 +61,7 @@ func (r *Router) Execute(ctx context.Context, req command.Request) (res command.
 	h, _ := r.registry.Get(c.Handler)
 	return h.Execute(ctx, command.Context{Command: c, Request: req, Execute: r})
 }
+func (r *Router) SetTimeout(d time.Duration) { r.timeout = d }
 func (r *Router) help(req command.Request) command.Result {
 	if n, _ := req.Params["command"].(string); n != "" {
 		c, ok := r.commands[n]

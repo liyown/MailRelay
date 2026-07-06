@@ -84,11 +84,16 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("environment variable %s is not set", missing)
 	}
 	var c Config
-	if err = yaml.Unmarshal(b, &c); err != nil {
+	dec := yaml.NewDecoder(strings.NewReader(string(b)))
+	dec.KnownFields(true)
+	if err = dec.Decode(&c); err != nil {
 		return nil, err
 	}
 	if c.Storage.Path == "" {
 		c.Storage.Path = "data/mailrelay.db"
+	}
+	if !filepath.IsAbs(c.Storage.Path) {
+		c.Storage.Path = filepath.Join(filepath.Dir(path), c.Storage.Path)
 	}
 	if c.Mail.IMAP.Mailbox == "" {
 		c.Mail.IMAP.Mailbox = "INBOX"
