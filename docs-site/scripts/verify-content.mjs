@@ -30,4 +30,13 @@ for (const phrase of [
   if (!landing.includes(phrase)) throw new Error(`landing page is missing: ${phrase}`);
 }
 
+for (const phrase of [
+  '不是高频交互界面',
+  '不重新发明控制通道',
+  '不是一句标语',
+  '不要先造平台',
+]) {
+  if (landing.includes(phrase)) throw new Error(`landing page contains filler copy: ${phrase}`);
+}
+
 console.log(`verified ${required.length} Fumadocs content artifacts`);
