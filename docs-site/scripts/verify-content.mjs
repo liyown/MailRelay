@@ -17,6 +17,9 @@ for (const file of required) await access(new URL(file, root));
 const landing = await readFile(new URL('src/app/page.tsx', root), 'utf8');
 const metadata = await readFile(new URL('src/app/layout.tsx', root), 'utf8');
 const publicCopy = `${landing}\n${metadata}`;
+const handlerOverview = await readFile(new URL('content/docs/handlers/index.mdx', root), 'utf8');
+const workflowQueue = await readFile(new URL('content/docs/handlers/workflow-queue.mdx', root), 'utf8');
+const reliability = await readFile(new URL('content/docs/operations/reliability.mdx', root), 'utf8');
 for (const phrase of [
   '用邮件执行可审计的远程操作',
   'MailRelay — 可审计的邮件远程操作',
@@ -47,6 +50,32 @@ for (const phrase of [
   '不要先造平台',
 ]) {
   if (publicCopy.includes(phrase)) throw new Error(`landing page contains filler copy: ${phrase}`);
+}
+
+for (const phrase of [
+  '| Workflow | Stable |',
+  '| Queue | Stable |',
+]) {
+  if (!handlerOverview.includes(phrase)) throw new Error(`handler overview is missing: ${phrase}`);
+}
+
+for (const phrase of [
+  '间接循环',
+  '最大深度',
+  '第一步失败后停止',
+  '不能声明敏感参数',
+  'unknown_command',
+  'invalid_parameters',
+]) {
+  if (!workflowQueue.includes(phrase)) throw new Error(`workflow/queue guide is missing: ${phrase}`);
+}
+
+for (const phrase of [
+  'mailrelay replay queue 42',
+  '依赖故障',
+  '终止错误',
+]) {
+  if (!reliability.includes(phrase)) throw new Error(`reliability guide is missing: ${phrase}`);
 }
 
 console.log(`verified ${required.length} Fumadocs content artifacts`);

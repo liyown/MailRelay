@@ -20,6 +20,8 @@ mailrelay replay queue 42
 mailrelay replay reply 17
 ```
 
+Queue 将外部依赖故障视为可重试错误，并按有上限的退避策略重新调度。配置缺失、参数非法或策略拒绝属于终止错误，会直接进入 dead 状态。先用 `mailrelay status` 确认失败分类，修复根因，再执行 replay。
+
 ## 72 小时验收
 
 ```bash

@@ -15,3 +15,16 @@ func TestValidateParams(t *testing.T) {
 		t.Fatal("expected unknown error")
 	}
 }
+
+func TestHandlerMaturityStableCore(t *testing.T) {
+	for _, name := range []string{"http", "webhook", "workflow", "queue"} {
+		if got := HandlerMaturity(name); got != "Stable" {
+			t.Fatalf("HandlerMaturity(%q)=%q, want Stable", name, got)
+		}
+	}
+	for _, name := range []string{"plugin", "shell", "agent", "mcp"} {
+		if got := HandlerMaturity(name); got != "Experimental" {
+			t.Fatalf("HandlerMaturity(%q)=%q, want Experimental", name, got)
+		}
+	}
+}

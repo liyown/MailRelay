@@ -74,8 +74,7 @@ All handlers implement the same consumer-side interface. The Router only resolve
 
 Support levels are part of generated Discovery output:
 
-- **Stable:** `http`, `webhook` — supported for the v0.1 golden path.
-- **Beta:** `workflow`, `queue` — suitable for controlled use with audit monitoring.
+- **Stable:** `http`, `webhook`, `workflow`, `queue` — supported for the v0.1 golden path and recovery lifecycle.
 - **Experimental:** `plugin`, `shell`, `agent`, `mcp`, and custom handlers — APIs and safety limits may still change.
 
 ### `http`
@@ -90,11 +89,11 @@ POSTs a standard JSON envelope containing version, command, request ID, timestam
 
 ### `workflow`
 
-Runs a bounded list of configured command steps through the Router. Each step has `command` and optional `params`. Values such as `{{env}}` map request parameters. Direct recursion, missing targets, timeouts, and excessive step counts fail safely.
+Runs a bounded list of configured command steps through the Router. Each step has `command` and optional `params`. Values such as `{{env}}` map request parameters. Missing targets, direct or indirect recursion, excessive depth, timeouts, and excessive step counts fail safely. Execution stops on the first failed step.
 
 ### `queue`
 
-Inserts a target command into the SQLite queue with an idempotency key derived from the message. `max_attempts` bounds retry. The local worker leases jobs transactionally and recovers expired leases after restart.
+Inserts a target command into the SQLite queue with an idempotency key derived from the message. `max_attempts` bounds retry. The local worker leases jobs transactionally and recovers expired leases after restart. Queue wrapper parameters must match the target schema and cannot be sensitive because delayed execution requires their durable plaintext value.
 
 ### `plugin`
 

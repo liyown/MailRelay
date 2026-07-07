@@ -5,7 +5,7 @@ description: 组合命令、延迟执行和失败恢复。
 
 ## Workflow
 
-Workflow 顺序执行配置声明的步骤，并共享总超时。
+Workflow 顺序执行配置声明的步骤，并共享总超时。配置加载时会验证所有目标存在，并拒绝直接循环和间接循环；运行时仍保留调用轨迹与最大深度守卫。
 
 ```yaml
 handler: workflow
@@ -17,7 +17,7 @@ config:
         env: "{{env}}"
 ```
 
-直接递归、空步骤和超过最大步骤数会被拒绝。
+直接递归、间接循环、空步骤、超过最大步骤数或最大深度都会被拒绝。Workflow 按顺序执行，第一步失败后停止，后续步骤不会运行；错误审计只记录步骤序号、Command 名称和安全分类。
 
 ## Queue
 
@@ -30,7 +30,13 @@ config:
 
 Queue 使用 SQLite lease。Worker 崩溃后，过期 lease 可以被重新 claim；耗尽重试后进入 dead 状态。
 
+Queue Command 的参数必须与目标 Command 同名同类型，并覆盖目标的必填参数。Queue 不能声明敏感参数：延迟执行依赖参数持久化，MailRelay 不会以 `[REDACTED]` 冒充可执行值，也不会在 v0.1 中引入隐式密钥存储。
+
+`dependency` 等外部依赖故障按配置退避重试；`unknown_command`、`invalid_parameters` 和 `policy` 属于终止错误，会直接进入 dead 状态，避免无意义重试。
+
 ```bash
 mailrelay status
 mailrelay replay queue 42
 ```
+
+修复配置或依赖后显式 replay。重放会重置尝试计数和 lease，但保留既有运行事件与审计记录。

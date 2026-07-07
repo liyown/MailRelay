@@ -73,10 +73,8 @@ type Handler interface {
 
 func HandlerMaturity(name string) string {
 	switch name {
-	case "http", "webhook":
+	case "http", "webhook", "workflow", "queue":
 		return "Stable"
-	case "workflow", "queue":
-		return "Beta"
 	default:
 		return "Experimental"
 	}
