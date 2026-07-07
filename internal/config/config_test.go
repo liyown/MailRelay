@@ -1,12 +1,58 @@
 package config
 
 import (
+	"github.com/becomeopc/opc-mailrelay/internal/command"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestValidateRejectsInvalidCommandGraphs(t *testing.T) {
+	base := func(commands ...command.Command) Config {
+		return Config{Security: Security{Token: "secret", Allow: []string{"me@example.com"}}, Commands: commands}
+	}
+	cases := []struct {
+		name string
+		cfg  Config
+		want string
+	}{
+		{
+			name: "workflow missing target",
+			cfg:  base(command.Command{Name: "release", Handler: "workflow", Config: map[string]any{"steps": []any{map[string]any{"command": "missing"}}}}),
+			want: "workflow target missing",
+		},
+		{
+			name: "queue missing target",
+			cfg:  base(command.Command{Name: "later", Handler: "queue", Config: map[string]any{"command": "missing"}}),
+			want: "queue target missing",
+		},
+		{
+			name: "indirect workflow cycle",
+			cfg: base(
+				command.Command{Name: "a", Handler: "workflow", Config: map[string]any{"steps": []any{map[string]any{"command": "b"}}}},
+				command.Command{Name: "b", Handler: "workflow", Config: map[string]any{"steps": []any{map[string]any{"command": "a"}}}},
+			),
+			want: "command cycle",
+		},
+		{
+			name: "mixed queue workflow cycle",
+			cfg: base(
+				command.Command{Name: "a", Handler: "queue", Config: map[string]any{"command": "b"}},
+				command.Command{Name: "b", Handler: "workflow", Config: map[string]any{"steps": []any{map[string]any{"command": "a"}}}},
+			),
+			want: "command cycle",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.cfg.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate() error=%v, want %q", err, tc.want)
+			}
+		})
+	}
+}
 
 func TestLoadExpandsAndDescribesCommands(t *testing.T) {
 	t.Setenv("TOKEN", "secret")

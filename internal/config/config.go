@@ -227,5 +227,74 @@ func (c *Config) Validate() error {
 			}
 		}
 	}
+	return validateCommandGraph(c.Commands)
+}
+
+func commandTargets(c command.Command) ([]string, error) {
+	switch c.Handler {
+	case "workflow":
+		raw, ok := c.Config["steps"].([]any)
+		if !ok || len(raw) == 0 {
+			return nil, fmt.Errorf("workflow %s has no steps", c.Name)
+		}
+		targets := make([]string, 0, len(raw))
+		for i, value := range raw {
+			step, ok := value.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("workflow %s step %d is invalid", c.Name, i+1)
+			}
+			target, _ := step["command"].(string)
+			if target == "" {
+				return nil, fmt.Errorf("workflow %s step %d has no command", c.Name, i+1)
+			}
+			targets = append(targets, target)
+		}
+		return targets, nil
+	case "queue":
+		target, _ := c.Config["command"].(string)
+		if target == "" {
+			return nil, fmt.Errorf("queue %s has no target", c.Name)
+		}
+		return []string{target}, nil
+	default:
+		return nil, nil
+	}
+}
+
+func validateCommandGraph(commands []command.Command) error {
+	byName := make(map[string]command.Command, len(commands))
+	for _, c := range commands {
+		byName[c.Name] = c
+	}
+	state := map[string]uint8{}
+	var visit func(string) error
+	visit = func(name string) error {
+		if state[name] == 1 {
+			return fmt.Errorf("command cycle involving %s", name)
+		}
+		if state[name] == 2 {
+			return nil
+		}
+		state[name] = 1
+		targets, err := commandTargets(byName[name])
+		if err != nil {
+			return err
+		}
+		for _, target := range targets {
+			if _, ok := byName[target]; !ok {
+				return fmt.Errorf("%s target %s is not declared", byName[name].Handler, target)
+			}
+			if err := visit(target); err != nil {
+				return err
+			}
+		}
+		state[name] = 2
+		return nil
+	}
+	for name := range byName {
+		if err := visit(name); err != nil {
+			return err
+		}
+	}
 	return nil
 }
