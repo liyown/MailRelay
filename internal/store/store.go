@@ -81,6 +81,35 @@ type HealthSummary struct {
 	LatestFailures []RuntimeEvent
 }
 
+type ExecutionRecord struct {
+	ID                                                  int64
+	MessageID, Command, Handler, Status, Summary, Error string
+	Sender                                              string
+	StartedAt                                           time.Time
+	Duration                                            time.Duration
+}
+
+type JobRecord struct {
+	ID                    int64
+	Command, Status       string
+	Attempts, MaxAttempts int
+	AvailableAt           time.Time
+}
+
+type ReplyRecord struct {
+	ID                     int64
+	MessageID, Recipient   string
+	Status, LastError      string
+	Attempts, MaxAttempts  int
+	AvailableAt, CreatedAt time.Time
+}
+
+type ConsoleCounts struct {
+	Executions, Success, ActiveHandlers   int
+	QueuePending, QueueRunning, QueueDead int
+	ReplyPending, ReplyRunning, ReplyDead int
+}
+
 const dbTimeLayout = "2006-01-02T15:04:05.000000000Z07:00"
 
 func dbTime(t time.Time) string {
@@ -641,4 +670,166 @@ func (s *Store) QueueDepth(ctx context.Context) (int, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM queue_jobs WHERE status IN ('pending','running')`).Scan(&n)
 	return n, err
+}
+
+func (s *Store) ConsoleExecutions(ctx context.Context, beforeID int64, limit int, status, commandName string) ([]ExecutionRecord, error) {
+	query := `SELECT e.id,e.message_id,e.command,e.handler,e.status,COALESCE(e.summary,''),COALESCE(e.error,''),e.started_at,e.duration_ms,COALESCE(m.sender,'')
+FROM executions e LEFT JOIN processed_messages m ON m.id=e.message_id WHERE 1=1`
+	args := make([]any, 0, 4)
+	if beforeID > 0 {
+		query += ` AND e.id<?`
+		args = append(args, beforeID)
+	}
+	if status != "" {
+		query += ` AND e.status=?`
+		args = append(args, status)
+	}
+	if commandName != "" {
+		query += ` AND e.command=?`
+		args = append(args, commandName)
+	}
+	query += ` ORDER BY e.id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ExecutionRecord
+	for rows.Next() {
+		var item ExecutionRecord
+		var started string
+		var durationMS int64
+		if err := rows.Scan(&item.ID, &item.MessageID, &item.Command, &item.Handler, &item.Status, &item.Summary, &item.Error, &started, &durationMS, &item.Sender); err != nil {
+			return nil, err
+		}
+		item.StartedAt, _ = parseDBTime(started)
+		item.Duration = time.Duration(durationMS) * time.Millisecond
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ConsoleJobs(ctx context.Context, beforeID int64, limit int, status string) ([]JobRecord, error) {
+	query := `SELECT id,command,status,attempts,max_attempts,available_at FROM queue_jobs WHERE 1=1`
+	args := make([]any, 0, 3)
+	if beforeID > 0 {
+		query += ` AND id<?`
+		args = append(args, beforeID)
+	}
+	if status != "" {
+		query += ` AND status=?`
+		args = append(args, status)
+	}
+	query += ` ORDER BY id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []JobRecord
+	for rows.Next() {
+		var item JobRecord
+		var available string
+		if err := rows.Scan(&item.ID, &item.Command, &item.Status, &item.Attempts, &item.MaxAttempts, &available); err != nil {
+			return nil, err
+		}
+		item.AvailableAt, _ = parseDBTime(available)
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ConsoleReplies(ctx context.Context, beforeID int64, limit int, status string) ([]ReplyRecord, error) {
+	query := `SELECT id,message_id,recipient,status,attempts,max_attempts,available_at,created_at,COALESCE(last_error,'') FROM outbox_replies WHERE 1=1`
+	args := make([]any, 0, 3)
+	if beforeID > 0 {
+		query += ` AND id<?`
+		args = append(args, beforeID)
+	}
+	if status != "" {
+		query += ` AND status=?`
+		args = append(args, status)
+	}
+	query += ` ORDER BY id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ReplyRecord
+	for rows.Next() {
+		var item ReplyRecord
+		var available, created string
+		if err := rows.Scan(&item.ID, &item.MessageID, &item.Recipient, &item.Status, &item.Attempts, &item.MaxAttempts, &available, &created, &item.LastError); err != nil {
+			return nil, err
+		}
+		item.AvailableAt, _ = parseDBTime(available)
+		item.CreatedAt, _ = parseDBTime(created)
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ConsoleEvents(ctx context.Context, beforeID int64, limit int, severity string) ([]RuntimeEvent, error) {
+	query := `SELECT id,at,severity,phase,message_id,command,handler,error_kind,summary FROM runtime_events WHERE 1=1`
+	args := make([]any, 0, 3)
+	if beforeID > 0 {
+		query += ` AND id<?`
+		args = append(args, beforeID)
+	}
+	if severity != "" {
+		query += ` AND severity=?`
+		args = append(args, severity)
+	}
+	query += ` ORDER BY id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RuntimeEvent
+	for rows.Next() {
+		var item RuntimeEvent
+		var at string
+		if err := rows.Scan(&item.ID, &at, &item.Severity, &item.Phase, &item.MessageID, &item.Command, &item.Handler, &item.ErrorKind, &item.Summary); err != nil {
+			return nil, err
+		}
+		item.At, _ = parseDBTime(at)
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ConsoleCountsSince(ctx context.Context, since time.Time) (ConsoleCounts, []time.Duration, error) {
+	var counts ConsoleCounts
+	err := s.db.QueryRowContext(ctx, `SELECT count(*),count(*) FILTER (WHERE status='success'),count(DISTINCT handler) FROM executions WHERE started_at>=?`, dbTime(since)).Scan(&counts.Executions, &counts.Success, &counts.ActiveHandlers)
+	if err != nil {
+		return counts, nil, err
+	}
+	err = s.db.QueryRowContext(ctx, `SELECT count(*) FILTER (WHERE status='pending'),count(*) FILTER (WHERE status='running'),count(*) FILTER (WHERE status='dead') FROM queue_jobs`).Scan(&counts.QueuePending, &counts.QueueRunning, &counts.QueueDead)
+	if err != nil {
+		return counts, nil, err
+	}
+	err = s.db.QueryRowContext(ctx, `SELECT count(*) FILTER (WHERE status='pending'),count(*) FILTER (WHERE status='running'),count(*) FILTER (WHERE status='dead') FROM outbox_replies`).Scan(&counts.ReplyPending, &counts.ReplyRunning, &counts.ReplyDead)
+	if err != nil {
+		return counts, nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT duration_ms FROM executions WHERE started_at>=? ORDER BY duration_ms`, dbTime(since))
+	if err != nil {
+		return counts, nil, err
+	}
+	defer rows.Close()
+	var durations []time.Duration
+	for rows.Next() {
+		var ms int64
+		if err := rows.Scan(&ms); err != nil {
+			return counts, nil, err
+		}
+		durations = append(durations, time.Duration(ms)*time.Millisecond)
+	}
+	return counts, durations, rows.Err()
 }
