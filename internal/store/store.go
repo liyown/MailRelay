@@ -9,10 +9,34 @@ import (
 	_ "modernc.org/sqlite"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
 type Store struct{ db *sql.DB }
+
+type MessageState string
+
+const (
+	MessageClaimed      MessageState = "claimed"
+	MessageAuthFailed   MessageState = "auth_failed"
+	MessageParseFailed  MessageState = "parse_failed"
+	MessageExecuting    MessageState = "executing"
+	MessageReplyPending MessageState = "reply_pending"
+	MessageDone         MessageState = "done"
+	MessageDead         MessageState = "dead"
+)
+
+type MessageUpdate struct {
+	ID           string
+	Sender       string
+	Command      string
+	State        MessageState
+	ErrorKind    string
+	ErrorSummary string
+	ReplyPending bool
+}
+
 type Execution struct {
 	ID                                                  int64
 	MessageID, Command, Handler, Status, Summary, Error string
@@ -32,6 +56,28 @@ type Reply struct {
 	Payload               []byte
 	Attempts, MaxAttempts int
 	AvailableAt           time.Time
+}
+
+const dbTimeLayout = "2006-01-02T15:04:05.000000000Z07:00"
+
+func dbTime(t time.Time) string {
+	return t.UTC().Format(dbTimeLayout)
+}
+
+func parseDBTime(v string) (time.Time, error) {
+	if t, err := time.Parse(dbTimeLayout, v); err == nil {
+		return t, nil
+	}
+	return time.Parse(time.RFC3339Nano, v)
+}
+
+func (s MessageState) String() string { return string(s) }
+
+func boolInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
 }
 
 func Open(path string) (*Store, error) {
@@ -60,6 +106,30 @@ CREATE INDEX IF NOT EXISTS queue_ready ON queue_jobs(status,available_at);
 CREATE TABLE IF NOT EXISTS outbox_replies(id INTEGER PRIMARY KEY AUTOINCREMENT,message_id TEXT NOT NULL UNIQUE,recipient TEXT NOT NULL,payload BLOB NOT NULL,max_attempts INTEGER NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,available_at TEXT NOT NULL,lease_until TEXT,status TEXT NOT NULL DEFAULT 'pending',last_error TEXT,created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS outbox_ready ON outbox_replies(status,available_at);
 CREATE TABLE IF NOT EXISTS runtime_state(key TEXT PRIMARY KEY,value TEXT NOT NULL,updated_at TEXT NOT NULL);`)
+	if err != nil {
+		return err
+	}
+	for _, col := range []struct {
+		name string
+		def  string
+	}{
+		{name: "command", def: "TEXT NOT NULL DEFAULT ''"},
+		{name: "error_kind", def: "TEXT NOT NULL DEFAULT ''"},
+		{name: "error_summary", def: "TEXT NOT NULL DEFAULT ''"},
+		{name: "updated_at", def: "TEXT NOT NULL DEFAULT ''"},
+	} {
+		if err := s.addColumn("processed_messages", col.name, col.def); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) addColumn(table, column, definition string) error {
+	_, err := s.db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, definition))
+	if err != nil && strings.Contains(err.Error(), "duplicate column name") {
+		return nil
+	}
 	return err
 }
 func (s *Store) RecordExecutionAndReply(ctx context.Context, e Execution, params map[string]any, recipient string, payload []byte, maxAttempts int) (int64, error) {
@@ -75,11 +145,11 @@ func (s *Store) RecordExecutionAndReply(ctx context.Context, e Execution, params
 		return 0, err
 	}
 	defer tx.Rollback()
-	_, err = tx.ExecContext(ctx, `INSERT INTO executions(message_id,command,handler,params_json,status,summary,error,started_at,duration_ms) VALUES(?,?,?,?,?,?,?,?,?)`, e.MessageID, e.Command, e.Handler, string(b), e.Status, e.Summary, e.Error, e.StartedAt.UTC().Format(time.RFC3339Nano), e.Duration.Milliseconds())
+	_, err = tx.ExecContext(ctx, `INSERT INTO executions(message_id,command,handler,params_json,status,summary,error,started_at,duration_ms) VALUES(?,?,?,?,?,?,?,?,?)`, e.MessageID, e.Command, e.Handler, string(b), e.Status, e.Summary, e.Error, dbTime(e.StartedAt), e.Duration.Milliseconds())
 	if err != nil {
 		return 0, err
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := dbTime(time.Now())
 	res, err := tx.ExecContext(ctx, `INSERT INTO outbox_replies(message_id,recipient,payload,max_attempts,available_at,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(message_id) DO NOTHING`, e.MessageID, recipient, payload, maxAttempts, now, now)
 	if err != nil {
 		return 0, err
@@ -93,7 +163,7 @@ func (s *Store) RecordExecutionAndReply(ctx context.Context, e Execution, params
 			return 0, err
 		}
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE processed_messages SET status=?,reply_pending=1 WHERE id=?`, e.Status, e.MessageID); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE processed_messages SET status=?,reply_pending=1,command=?,error_kind='',error_summary='',updated_at=? WHERE id=?`, MessageReplyPending, e.Command, now, e.MessageID); err != nil {
 		return 0, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -116,7 +186,7 @@ func (s *Store) claimReply(ctx context.Context, id int64, now time.Time, lease t
 	var r Reply
 	var at string
 	query := `SELECT id,message_id,recipient,payload,attempts,max_attempts,available_at FROM outbox_replies WHERE (status='pending' OR (status='running' AND lease_until<?)) AND available_at<=? AND attempts<max_attempts`
-	args := []any{now.UTC().Format(time.RFC3339Nano), now.UTC().Format(time.RFC3339Nano)}
+	args := []any{dbTime(now), dbTime(now)}
 	if id > 0 {
 		query += ` AND id=?`
 		args = append(args, id)
@@ -129,7 +199,7 @@ func (s *Store) claimReply(ctx context.Context, id int64, now time.Time, lease t
 	if err != nil {
 		return nil, err
 	}
-	res, err := tx.ExecContext(ctx, `UPDATE outbox_replies SET status='running',attempts=attempts+1,lease_until=? WHERE id=?`, now.Add(lease).UTC().Format(time.RFC3339Nano), r.ID)
+	res, err := tx.ExecContext(ctx, `UPDATE outbox_replies SET status='running',attempts=attempts+1,lease_until=? WHERE id=?`, dbTime(now.Add(lease)), r.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +208,7 @@ func (s *Store) claimReply(ctx context.Context, id int64, now time.Time, lease t
 		return nil, fmt.Errorf("reply claim lost")
 	}
 	r.Attempts++
-	r.AvailableAt, _ = time.Parse(time.RFC3339Nano, at)
+	r.AvailableAt, _ = parseDBTime(at)
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -153,7 +223,7 @@ func (s *Store) CompleteReply(ctx context.Context, r *Reply) error {
 	if _, err = tx.ExecContext(ctx, `UPDATE outbox_replies SET status='done',lease_until=NULL,last_error=NULL WHERE id=?`, r.ID); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE processed_messages SET reply_pending=0 WHERE id=?`, r.MessageID); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE processed_messages SET status=?,reply_pending=0,updated_at=? WHERE id=?`, MessageDone, dbTime(time.Now()), r.MessageID); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -163,7 +233,7 @@ func (s *Store) FailReply(ctx context.Context, r *Reply, reason string, backoff 
 	if r.Attempts >= r.MaxAttempts {
 		status = "dead"
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE outbox_replies SET status=?,last_error=?,available_at=?,lease_until=NULL WHERE id=?`, status, reason, time.Now().Add(backoff).UTC().Format(time.RFC3339Nano), r.ID)
+	_, err := s.db.ExecContext(ctx, `UPDATE outbox_replies SET status=?,last_error=?,available_at=?,lease_until=NULL WHERE id=?`, status, reason, dbTime(time.Now().Add(backoff)), r.ID)
 	return err
 }
 func (s *Store) ReplyCounts(ctx context.Context) (pending, dead int, err error) {
@@ -171,7 +241,7 @@ func (s *Store) ReplyCounts(ctx context.Context) (pending, dead int, err error) 
 	return
 }
 func (s *Store) ReplayReply(ctx context.Context, id int64) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE outbox_replies SET status='pending',attempts=0,available_at=?,lease_until=NULL,last_error=NULL WHERE id=? AND status='dead'`, time.Now().UTC().Format(time.RFC3339Nano), id)
+	res, err := s.db.ExecContext(ctx, `UPDATE outbox_replies SET status='pending',attempts=0,available_at=?,lease_until=NULL,last_error=NULL WHERE id=? AND status='dead'`, dbTime(time.Now()), id)
 	if err != nil {
 		return err
 	}
@@ -182,7 +252,7 @@ func (s *Store) ReplayReply(ctx context.Context, id int64) error {
 	return nil
 }
 func (s *Store) ClaimMessage(ctx context.Context, id, sender string) (bool, error) {
-	r, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO processed_messages(id,sender) VALUES(?,?)`, id, sender)
+	r, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO processed_messages(id,sender,status,updated_at) VALUES(?,?,?,?)`, id, sender, MessageClaimed, dbTime(time.Now()))
 	if err != nil {
 		return false, err
 	}
@@ -190,15 +260,39 @@ func (s *Store) ClaimMessage(ctx context.Context, id, sender string) (bool, erro
 	return n == 1, err
 }
 func (s *Store) MarkMessage(ctx context.Context, id, status string, replyPending bool) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE processed_messages SET status=?,reply_pending=? WHERE id=?`, status, replyPending, id)
+	_, err := s.db.ExecContext(ctx, `UPDATE processed_messages SET status=?,reply_pending=?,updated_at=? WHERE id=?`, status, boolInt(replyPending), dbTime(time.Now()), id)
 	return err
+}
+func (s *Store) RecordMessageFailure(ctx context.Context, u MessageUpdate) error {
+	if u.ID == "" {
+		u.ID = "generated:" + dbTime(time.Now()) + ":" + u.State.String()
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO processed_messages(id,sender,status,reply_pending,command,error_kind,error_summary,updated_at)
+VALUES(?,?,?,?,?,?,?,?)
+ON CONFLICT(id) DO UPDATE SET sender=excluded.sender,status=excluded.status,reply_pending=excluded.reply_pending,command=excluded.command,error_kind=excluded.error_kind,error_summary=excluded.error_summary,updated_at=excluded.updated_at`,
+		u.ID, u.Sender, string(u.State), boolInt(u.ReplyPending), u.Command, u.ErrorKind, u.ErrorSummary, dbTime(time.Now()))
+	return err
+}
+
+func (s *Store) MarkMessageExecuting(ctx context.Context, id, sender, command string) error {
+	return s.RecordMessageFailure(ctx, MessageUpdate{ID: id, Sender: sender, Command: command, State: MessageExecuting})
+}
+
+func (s *Store) MessageState(ctx context.Context, id string) (MessageUpdate, error) {
+	var u MessageUpdate
+	var state string
+	var pending int
+	err := s.db.QueryRowContext(ctx, `SELECT id,sender,COALESCE(command,''),status,COALESCE(error_kind,''),COALESCE(error_summary,''),reply_pending FROM processed_messages WHERE id=?`, id).Scan(&u.ID, &u.Sender, &u.Command, &state, &u.ErrorKind, &u.ErrorSummary, &pending)
+	u.State = MessageState(state)
+	u.ReplyPending = pending != 0
+	return u, err
 }
 func (s *Store) AddExecution(ctx context.Context, e Execution, params map[string]any) (int64, error) {
 	b, err := json.Marshal(params)
 	if err != nil {
 		return 0, err
 	}
-	r, err := s.db.ExecContext(ctx, `INSERT INTO executions(message_id,command,handler,params_json,status,summary,error,started_at,duration_ms) VALUES(?,?,?,?,?,?,?,?,?)`, e.MessageID, e.Command, e.Handler, string(b), e.Status, e.Summary, e.Error, e.StartedAt.UTC().Format(time.RFC3339Nano), e.Duration.Milliseconds())
+	r, err := s.db.ExecContext(ctx, `INSERT INTO executions(message_id,command,handler,params_json,status,summary,error,started_at,duration_ms) VALUES(?,?,?,?,?,?,?,?,?)`, e.MessageID, e.Command, e.Handler, string(b), e.Status, e.Summary, e.Error, dbTime(e.StartedAt), e.Duration.Milliseconds())
 	if err != nil {
 		return 0, err
 	}
@@ -212,12 +306,12 @@ func (s *Store) RecentExecution(ctx context.Context) (Execution, error) {
 	if err != nil {
 		return e, err
 	}
-	e.StartedAt, _ = time.Parse(time.RFC3339Nano, started)
+	e.StartedAt, _ = parseDBTime(started)
 	e.Duration = time.Duration(ms) * time.Millisecond
 	return e, nil
 }
 func (s *Store) SaveCatalog(ctx context.Context, hash string, catalog []byte, notified bool) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO catalog_snapshots(id,hash,catalog,notified,updated_at) VALUES(1,?,?,?,?) ON CONFLICT(id) DO UPDATE SET hash=excluded.hash,catalog=excluded.catalog,notified=excluded.notified,updated_at=excluded.updated_at`, hash, catalog, notified, time.Now().UTC().Format(time.RFC3339Nano))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO catalog_snapshots(id,hash,catalog,notified,updated_at) VALUES(1,?,?,?,?) ON CONFLICT(id) DO UPDATE SET hash=excluded.hash,catalog=excluded.catalog,notified=excluded.notified,updated_at=excluded.updated_at`, hash, catalog, notified, dbTime(time.Now()))
 	return err
 }
 func (s *Store) Catalog(ctx context.Context) (string, []byte, bool, error) {
@@ -228,7 +322,7 @@ func (s *Store) Catalog(ctx context.Context) (string, []byte, bool, error) {
 	return h, b, n, err
 }
 func (s *Store) SetState(ctx context.Context, k, v string) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO runtime_state(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`, k, v, time.Now().UTC().Format(time.RFC3339Nano))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO runtime_state(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`, k, v, dbTime(time.Now()))
 	return err
 }
 func (s *Store) State(ctx context.Context, k string) (string, error) {
@@ -244,7 +338,7 @@ func (s *Store) Enqueue(ctx context.Context, cmd string, params map[string]any, 
 	if err != nil {
 		return 0, err
 	}
-	r, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO queue_jobs(command,params_json,idempotency_key,max_attempts,available_at) VALUES(?,?,?,?,?)`, cmd, string(b), key, max, at.UTC().Format(time.RFC3339Nano))
+	r, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO queue_jobs(command,params_json,idempotency_key,max_attempts,available_at) VALUES(?,?,?,?,?)`, cmd, string(b), key, max, dbTime(at))
 	if err != nil {
 		return 0, err
 	}
@@ -262,14 +356,14 @@ func (s *Store) ClaimJob(ctx context.Context, now time.Time, lease time.Duration
 	defer tx.Rollback()
 	var j Job
 	var raw, at string
-	err = tx.QueryRowContext(ctx, `SELECT id,command,params_json,attempts,max_attempts,available_at FROM queue_jobs WHERE (status='pending' OR (status='running' AND lease_until<?)) AND available_at<=? AND attempts<max_attempts ORDER BY id LIMIT 1`, now.UTC().Format(time.RFC3339Nano), now.UTC().Format(time.RFC3339Nano)).Scan(&j.ID, &j.Command, &raw, &j.Attempts, &j.MaxAttempts, &at)
+	err = tx.QueryRowContext(ctx, `SELECT id,command,params_json,attempts,max_attempts,available_at FROM queue_jobs WHERE (status='pending' OR (status='running' AND lease_until<?)) AND available_at<=? AND attempts<max_attempts ORDER BY id LIMIT 1`, dbTime(now), dbTime(now)).Scan(&j.ID, &j.Command, &raw, &j.Attempts, &j.MaxAttempts, &at)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	r, err := tx.ExecContext(ctx, `UPDATE queue_jobs SET status='running',attempts=attempts+1,lease_until=? WHERE id=?`, now.Add(lease).UTC().Format(time.RFC3339Nano), j.ID)
+	r, err := tx.ExecContext(ctx, `UPDATE queue_jobs SET status='running',attempts=attempts+1,lease_until=? WHERE id=?`, dbTime(now.Add(lease)), j.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -278,7 +372,7 @@ func (s *Store) ClaimJob(ctx context.Context, now time.Time, lease time.Duration
 		return nil, fmt.Errorf("queue claim lost")
 	}
 	j.Attempts++
-	j.AvailableAt, _ = time.Parse(time.RFC3339Nano, at)
+	j.AvailableAt, _ = parseDBTime(at)
 	if err = json.Unmarshal([]byte(raw), &j.Params); err != nil {
 		return nil, err
 	}
@@ -296,7 +390,7 @@ func (s *Store) FailJob(ctx context.Context, j *Job, reason string, backoff time
 	if j.Attempts >= j.MaxAttempts {
 		status = "dead"
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE queue_jobs SET status=?,result=?,available_at=?,lease_until=NULL WHERE id=?`, status, reason, time.Now().Add(backoff).UTC().Format(time.RFC3339Nano), j.ID)
+	_, err := s.db.ExecContext(ctx, `UPDATE queue_jobs SET status=?,result=?,available_at=?,lease_until=NULL WHERE id=?`, status, reason, dbTime(time.Now().Add(backoff)), j.ID)
 	return err
 }
 func (s *Store) DeadCounts(ctx context.Context) (queueDead, replyDead int, err error) {
@@ -304,7 +398,7 @@ func (s *Store) DeadCounts(ctx context.Context) (queueDead, replyDead int, err e
 	return
 }
 func (s *Store) ReplayJob(ctx context.Context, id int64) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE queue_jobs SET status='pending',attempts=0,available_at=?,lease_until=NULL,result=NULL WHERE id=? AND status='dead'`, time.Now().UTC().Format(time.RFC3339Nano), id)
+	res, err := s.db.ExecContext(ctx, `UPDATE queue_jobs SET status='pending',attempts=0,available_at=?,lease_until=NULL,result=NULL WHERE id=? AND status='dead'`, dbTime(time.Now()), id)
 	if err != nil {
 		return err
 	}

@@ -75,6 +75,54 @@ func TestClaimsPersistAndQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestMessageLifecycleStatesArePersisted(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "messages.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	if err := s.RecordMessageFailure(ctx, MessageUpdate{ID: "parse:1", Sender: "bad@example.com", State: MessageParseFailed, ErrorKind: "parse", ErrorSummary: "missing subject"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.MessageState(ctx, "parse:1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != MessageParseFailed || got.ErrorKind != "parse" || got.ErrorSummary != "missing subject" {
+		t.Fatalf("unexpected state: %#v", got)
+	}
+	if err := s.MarkMessageExecuting(ctx, "m1", "me@example.com", "push"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.MessageState(ctx, "m1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != MessageExecuting || got.Command != "push" || got.Sender != "me@example.com" {
+		t.Fatalf("unexpected executing state: %#v", got)
+	}
+}
+
+func TestQueueClaimsSameSecondFractionalTimesChronologically(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "fractional.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	available := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 7, 7, 12, 0, 0, 1, time.UTC)
+	if _, err := s.Enqueue(ctx, "deploy", nil, "fractional-key", 1, available); err != nil {
+		t.Fatal(err)
+	}
+	j, err := s.ClaimJob(ctx, now, time.Minute)
+	if err != nil || j == nil {
+		t.Fatalf("claim at %s for available %s returned %#v, %v", now.Format(time.RFC3339Nano), available.Format(time.RFC3339Nano), j, err)
+	}
+}
+
 func TestCatalogAndRuntime(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "x.db"))
 	if err != nil {

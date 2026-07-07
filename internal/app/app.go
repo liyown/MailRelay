@@ -41,10 +41,20 @@ func (a *App) Process(ctx context.Context, raw io.ReadCloser) error {
 	token, from, sender, route := a.token, a.from, a.sender, a.router
 	a.mu.RUnlock()
 	if err = security.Authenticate(m.Request, m.Token, allow, token); err != nil {
+		_ = a.store.RecordMessageFailure(ctx, store.MessageUpdate{
+			ID:           m.Request.MessageID,
+			Sender:       m.Request.Sender,
+			State:        store.MessageAuthFailed,
+			ErrorKind:    "authentication",
+			ErrorSummary: "authentication failed",
+		})
 		return err
 	}
 	claimed, err := a.store.ClaimMessage(ctx, m.Request.MessageID, m.Request.Sender)
 	if err != nil || !claimed {
+		return err
+	}
+	if err = a.store.MarkMessageExecuting(ctx, m.Request.MessageID, m.Request.Sender, m.Request.Name); err != nil {
 		return err
 	}
 	started := time.Now()
@@ -130,11 +140,17 @@ func (a *App) Once(ctx context.Context, r mailbox.Receiver, limit int) error {
 		return err
 	}
 	for _, m := range msgs {
-		if err = a.Process(ctx, mailbox.RawReader(m)); err != nil {
-			return fmt.Errorf("message %d: %w", m.UID, err)
+		err = a.Process(ctx, mailbox.RawReader(m))
+		if err != nil {
+			_ = a.store.RecordMessageFailure(ctx, store.MessageUpdate{
+				ID:           fmt.Sprintf("uid:%d", m.UID),
+				State:        store.MessageDead,
+				ErrorKind:    "message",
+				ErrorSummary: classify(err),
+			})
 		}
-		if err = r.MarkSeen(ctx, m.UID); err != nil {
-			return err
+		if markErr := r.MarkSeen(ctx, m.UID); markErr != nil {
+			return markErr
 		}
 	}
 	return nil
