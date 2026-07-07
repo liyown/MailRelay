@@ -20,6 +20,7 @@ import (
 	"github.com/becomeopc/opc-mailrelay/internal/security"
 	"github.com/becomeopc/opc-mailrelay/internal/store"
 	"github.com/becomeopc/opc-mailrelay/internal/version"
+	webconsole "github.com/becomeopc/opc-mailrelay/internal/web"
 )
 
 const usage = `MailRelay - email-driven command runtime
@@ -33,6 +34,7 @@ Usage:
 	mailrelay replay queue|reply ID [--config path]
 	mailrelay soak --duration 72h [--config path]
 	mailrelay version
+	mailrelay hash-password
   mailrelay help
 `
 
@@ -73,6 +75,17 @@ func Run(ctx context.Context, args []string, out, errout io.Writer) int {
 		err = soak(ctx, *path, rest[1:], out)
 	case "version":
 		fmt.Fprintln(out, version.String())
+	case "hash-password":
+		password := os.Getenv("MAILRELAY_ADMIN_PASSWORD")
+		if password == "" {
+			err = fmt.Errorf("MAILRELAY_ADMIN_PASSWORD is required")
+			break
+		}
+		var hash string
+		hash, err = webconsole.HashPassword(password, nil)
+		if err == nil {
+			fmt.Fprintln(out, hash)
+		}
 	default:
 		fmt.Fprintf(errout, "unknown command %q\n%s", rest[0], usage)
 		return 2

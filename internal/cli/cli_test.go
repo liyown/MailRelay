@@ -46,6 +46,17 @@ func TestInitHelpDoctorStatus(t *testing.T) {
 	}
 }
 
+func TestHashPasswordUsesEnvironmentWithoutEchoingPlaintext(t *testing.T) {
+	t.Setenv("MAILRELAY_ADMIN_PASSWORD", "console-secret")
+	var out, errout bytes.Buffer
+	if code := Run(context.Background(), []string{"hash-password"}, &out, &errout); code != 0 {
+		t.Fatalf("code=%d err=%s", code, errout.String())
+	}
+	if !strings.HasPrefix(strings.TrimSpace(out.String()), "$argon2id$") || strings.Contains(out.String(), "console-secret") {
+		t.Fatalf("unexpected output: %q", out.String())
+	}
+}
+
 func TestStatusAndReplayDeadLetters(t *testing.T) {
 	d := t.TempDir()
 	cfgPath := filepath.Join(d, "mailrelay.yaml")
