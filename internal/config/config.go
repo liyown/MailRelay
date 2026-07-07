@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -50,6 +52,40 @@ type Security struct {
 type Storage struct {
 	Path string `yaml:"path"`
 }
+type Web struct {
+	Enabled           bool          `yaml:"enabled"`
+	Address           string        `yaml:"address"`
+	PublicURL         string        `yaml:"public_url"`
+	SessionSecret     string        `yaml:"session_secret"`
+	AdminPasswordHash string        `yaml:"admin_password_hash"`
+	SessionTTL        time.Duration `yaml:"-"`
+}
+
+func (w *Web) UnmarshalYAML(n *yaml.Node) error {
+	type raw struct {
+		Enabled           bool   `yaml:"enabled"`
+		Address           string `yaml:"address"`
+		PublicURL         string `yaml:"public_url"`
+		SessionSecret     string `yaml:"session_secret"`
+		AdminPasswordHash string `yaml:"admin_password_hash"`
+		SessionTTL        string `yaml:"session_ttl"`
+	}
+	var x raw
+	if err := n.Decode(&x); err != nil {
+		return err
+	}
+	w.Enabled, w.Address, w.PublicURL = x.Enabled, x.Address, x.PublicURL
+	w.SessionSecret, w.AdminPasswordHash = x.SessionSecret, x.AdminPasswordHash
+	if x.SessionTTL != "" {
+		d, err := time.ParseDuration(x.SessionTTL)
+		if err != nil {
+			return fmt.Errorf("web.session_ttl: %w", err)
+		}
+		w.SessionTTL = d
+	}
+	return nil
+}
+
 type Runtime struct {
 	CommandTimeout     string        `yaml:"command_timeout"`
 	ConfigReload       bool          `yaml:"config_reload"`
@@ -107,6 +143,7 @@ type Config struct {
 	Mail     Mail                      `yaml:"mail"`
 	Security Security                  `yaml:"security"`
 	Storage  Storage                   `yaml:"storage"`
+	Web      Web                       `yaml:"web"`
 	Runtime  Runtime                   `yaml:"runtime"`
 	Handlers map[string]map[string]any `yaml:"handlers"`
 	Commands []command.Command         `yaml:"commands"`
@@ -144,6 +181,12 @@ func Load(path string) (*Config, error) {
 	if c.Storage.Path == "" {
 		c.Storage.Path = "data/mailrelay.db"
 	}
+	if c.Web.Address == "" {
+		c.Web.Address = "127.0.0.1:8787"
+	}
+	if c.Web.SessionTTL == 0 {
+		c.Web.SessionTTL = 8 * time.Hour
+	}
 	if !filepath.IsAbs(c.Storage.Path) {
 		c.Storage.Path = filepath.Join(filepath.Dir(path), c.Storage.Path)
 	}
@@ -176,6 +219,26 @@ func (c *Config) Validate() error {
 	}
 	if len(c.Security.Allow) == 0 {
 		return fmt.Errorf("security.allow is required")
+	}
+	if c.Web.Enabled {
+		if len(c.Web.SessionSecret) < 32 {
+			return fmt.Errorf("web.session_secret must contain at least 32 bytes")
+		}
+		if !strings.HasPrefix(c.Web.AdminPasswordHash, "$argon2id$") {
+			return fmt.Errorf("web.admin_password_hash must be an Argon2id hash")
+		}
+		if _, _, err := net.SplitHostPort(c.Web.Address); err != nil {
+			return fmt.Errorf("web.address must be host:port: %w", err)
+		}
+		if c.Web.SessionTTL < 0 {
+			return fmt.Errorf("web.session_ttl cannot be negative")
+		}
+		if c.Web.PublicURL != "" {
+			u, err := url.Parse(c.Web.PublicURL)
+			if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+				return fmt.Errorf("web.public_url must be an absolute http or https URL")
+			}
+		}
 	}
 	seen := map[string]bool{}
 	validName := regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)

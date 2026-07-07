@@ -347,3 +347,40 @@ commands: []
 		t.Fatalf("expected config_reload default true when runtime omitted, got %#v", c.Runtime)
 	}
 }
+
+func TestWebDefaultsAndValidation(t *testing.T) {
+	t.Run("disabled defaults", func(t *testing.T) {
+		p := filepath.Join(t.TempDir(), "mailrelay.yaml")
+		body := "security: {token: secret, allow: [me@example.com]}\ncommands: []\n"
+		if err := os.WriteFile(p, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		c, err := Load(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.Web.Enabled || c.Web.Address != "127.0.0.1:8787" || c.Web.SessionTTL != 8*time.Hour {
+			t.Fatalf("unexpected web defaults: %#v", c.Web)
+		}
+	})
+
+	base := Config{Security: Security{Token: "secret", Allow: []string{"me@example.com"}}}
+	base.Web.Enabled = true
+	if err := base.Validate(); err == nil || !strings.Contains(err.Error(), "web.session_secret") {
+		t.Fatalf("expected missing session secret, got %v", err)
+	}
+	base.Web.SessionSecret = strings.Repeat("s", 32)
+	if err := base.Validate(); err == nil || !strings.Contains(err.Error(), "web.admin_password_hash") {
+		t.Fatalf("expected missing password hash, got %v", err)
+	}
+	base.Web.AdminPasswordHash = "$argon2id$v=19$m=65536,t=3,p=2$c2FsdHNhbHRzYWx0c2FsdA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	base.Web.Address = "127.0.0.1:8787"
+	base.Web.PublicURL = "https://relay.example.com"
+	if err := base.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	base.Web.PublicURL = "ftp://relay.example.com"
+	if err := base.Validate(); err == nil || !strings.Contains(err.Error(), "web.public_url") {
+		t.Fatalf("expected invalid public URL, got %v", err)
+	}
+}
