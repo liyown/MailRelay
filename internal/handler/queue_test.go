@@ -56,7 +56,7 @@ func TestQueueAndWorker(t *testing.T) {
 	}
 }
 
-func TestQueueRedactsSensitiveParamsButWorkerReceivesRedactedCopy(t *testing.T) {
+func TestQueueRedactsSensitiveParamsAtHandlerBoundary(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "q-redact.db")
 	s, err := store.Open(path)
 	if err != nil {

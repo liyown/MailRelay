@@ -54,6 +54,97 @@ func TestValidateRejectsInvalidCommandGraphs(t *testing.T) {
 	}
 }
 
+func TestValidateQueueSchema(t *testing.T) {
+	makeConfig := func(wrapper, target command.Command) *Config {
+		return &Config{
+			Security: Security{Token: "secret", Allow: []string{"me@example.com"}, HTTPHosts: []string{"api.example.com"}},
+			Commands: []command.Command{wrapper, target},
+		}
+	}
+	validWrapper := command.Command{
+		Name:    "later",
+		Handler: "queue",
+		Parameters: map[string]command.Parameter{
+			"env": {Type: "string", Required: true},
+		},
+		Config: map[string]any{"command": "deploy"},
+	}
+	validTarget := command.Command{
+		Name:    "deploy",
+		Handler: "http",
+		Parameters: map[string]command.Parameter{
+			"env": {Type: "string", Required: true},
+		},
+		Config: map[string]any{"url": "https://api.example.com/deploy"},
+	}
+	clone := func(c command.Command) command.Command {
+		out := c
+		out.Parameters = make(map[string]command.Parameter, len(c.Parameters))
+		for name, p := range c.Parameters {
+			out.Parameters[name] = p
+		}
+		return out
+	}
+	t.Run("compatible", func(t *testing.T) {
+		if err := makeConfig(validWrapper, validTarget).Validate(); err != nil {
+			t.Fatalf("Validate() error=%v", err)
+		}
+	})
+	cases := []struct {
+		name   string
+		mutate func(*command.Command, *command.Command)
+		want   string
+	}{
+		{
+			name: "wrapper parameter absent from target",
+			mutate: func(wrapper, _ *command.Command) {
+				wrapper.Parameters["region"] = command.Parameter{Type: "string"}
+			},
+			want: "queue command later parameter region is not declared by target deploy",
+		},
+		{
+			name: "parameter type mismatch",
+			mutate: func(_, target *command.Command) {
+				target.Parameters["env"] = command.Parameter{Type: "integer", Required: true}
+			},
+			want: "queue command later parameter env type does not match target deploy",
+		},
+		{
+			name: "required target parameter omitted",
+			mutate: func(wrapper, target *command.Command) {
+				delete(wrapper.Parameters, "env")
+				target.Parameters["env"] = command.Parameter{Type: "string", Required: true}
+			},
+			want: "queue command later must require target parameter env",
+		},
+		{
+			name: "wrapper sensitive parameter",
+			mutate: func(wrapper, target *command.Command) {
+				wrapper.Parameters["token"] = command.Parameter{Type: "string", Sensitive: true}
+				target.Parameters["token"] = command.Parameter{Type: "string"}
+			},
+			want: "queue command later cannot persist sensitive parameter token",
+		},
+		{
+			name: "target sensitive parameter",
+			mutate: func(wrapper, target *command.Command) {
+				wrapper.Parameters["token"] = command.Parameter{Type: "string"}
+				target.Parameters["token"] = command.Parameter{Type: "string", Sensitive: true}
+			},
+			want: "queue command later cannot persist sensitive parameter token",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			wrapper, target := clone(validWrapper), clone(validTarget)
+			tc.mutate(&wrapper, &target)
+			if err := makeConfig(wrapper, target).Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate() error=%v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestLoadExpandsAndDescribesCommands(t *testing.T) {
 	t.Setenv("TOKEN", "secret")
 	p := filepath.Join(t.TempDir(), "mailrelay.yaml")

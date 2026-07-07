@@ -227,7 +227,55 @@ func (c *Config) Validate() error {
 			}
 		}
 	}
-	return validateCommandGraph(c.Commands)
+	if err := validateCommandGraph(c.Commands); err != nil {
+		return err
+	}
+	byName := make(map[string]command.Command, len(c.Commands))
+	for _, cmd := range c.Commands {
+		byName[cmd.Name] = cmd
+	}
+	for _, cmd := range c.Commands {
+		if cmd.Handler != "queue" {
+			continue
+		}
+		target, _ := cmd.Config["command"].(string)
+		if err := validateQueueSchema(cmd, byName[target]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func parameterType(p command.Parameter) string {
+	if p.Type == "" {
+		return "string"
+	}
+	return p.Type
+}
+
+func validateQueueSchema(wrapper, target command.Command) error {
+	for name, source := range wrapper.Parameters {
+		destination, ok := target.Parameters[name]
+		if !ok {
+			return fmt.Errorf("queue command %s parameter %s is not declared by target %s", wrapper.Name, name, target.Name)
+		}
+		if source.Sensitive || destination.Sensitive {
+			return fmt.Errorf("queue command %s cannot persist sensitive parameter %s", wrapper.Name, name)
+		}
+		if parameterType(source) != parameterType(destination) {
+			return fmt.Errorf("queue command %s parameter %s type does not match target %s", wrapper.Name, name, target.Name)
+		}
+	}
+	for name, destination := range target.Parameters {
+		if !destination.Required {
+			continue
+		}
+		source, ok := wrapper.Parameters[name]
+		if !ok || !source.Required {
+			return fmt.Errorf("queue command %s must require target parameter %s", wrapper.Name, name)
+		}
+	}
+	return nil
 }
 
 func commandTargets(c command.Command) ([]string, error) {
