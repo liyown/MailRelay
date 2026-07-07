@@ -45,6 +45,20 @@ type Catalog interface {
 	Command(string) (Command, bool)
 }
 
+func MergeSensitiveParameters(commands ...Command) Command {
+	merged := Command{Parameters: map[string]Parameter{}}
+	for _, c := range commands {
+		for name, p := range c.Parameters {
+			existing := merged.Parameters[name]
+			if p.Sensitive {
+				existing.Sensitive = true
+			}
+			merged.Parameters[name] = existing
+		}
+	}
+	return merged
+}
+
 type Result struct {
 	Status, Summary, Body string
 	Data                  map[string]any

@@ -161,6 +161,67 @@ func TestQueueRedactsParamsUsingTargetCommandMetadata(t *testing.T) {
 	}
 }
 
+func TestQueueRedactsParamsUsingWrapperAndTargetMetadata(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "q-union-redact.db")
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	h := NewQueue(s)
+	wrapper := command.Command{
+		Name:    "later",
+		Handler: "queue",
+		Config:  map[string]any{"command": "deploy"},
+		Parameters: map[string]command.Parameter{
+			"env":   {Type: "string"},
+			"token": {Type: "string", Sensitive: true},
+		},
+	}
+	target := command.Command{
+		Name:    "deploy",
+		Handler: "capture",
+		Parameters: map[string]command.Parameter{
+			"env":   {Type: "string"},
+			"token": {Type: "string"},
+		},
+	}
+
+	_, err = h.Execute(context.Background(), command.Context{
+		Command: wrapper,
+		Request: command.Request{
+			MessageID: "m-wrapper-redact",
+			Name:      "later",
+			Params:    map[string]any{"env": "prod", "token": "wrapper-secret"},
+		},
+		Execute: catalogExec{commands: map[string]command.Command{"deploy": target}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var raw string
+	if err := db.QueryRow(`SELECT params_json FROM queue_jobs WHERE idempotency_key='m-wrapper-redact:later'`).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(raw, "wrapper-secret") {
+		t.Fatalf("raw wrapper secret leaked into queue params: %s", raw)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["token"] != "[REDACTED]" || got["env"] != "prod" {
+		t.Fatalf("unexpected queue params: %s", raw)
+	}
+}
+
 func TestQueueUsesRuntimeDefaultAttemptsAndBackoff(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "q-policy.db")
 	s, err := store.Open(path)

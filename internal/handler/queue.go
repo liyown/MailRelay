@@ -47,7 +47,7 @@ func (q *Queue) Execute(ctx context.Context, x command.Context) (command.Result,
 	redactFrom := x.Command
 	if catalog, ok := x.Execute.(command.Catalog); ok {
 		if targetCommand, found := catalog.Command(target); found {
-			redactFrom = targetCommand
+			redactFrom = command.MergeSensitiveParameters(x.Command, targetCommand)
 		}
 	}
 	id, err := q.store.Enqueue(ctx, target, security.Redact(redactFrom, x.Request.Params), key, max, time.Now())

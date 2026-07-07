@@ -349,6 +349,77 @@ func TestProcessRedactsSensitiveParamsInExecutionButHandlerSeesRaw(t *testing.T)
 	}
 }
 
+func TestProcessQueueWrapperRedactsTargetSensitiveParamsInExecution(t *testing.T) {
+	path := t.TempDir() + "/queue-wrapper-redact.db"
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	q := handler.NewQueue(st)
+	reg := handler.NewRegistry()
+	if err := reg.Register(q); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Register(&paramsCaptureHandler{}); err != nil {
+		t.Fatal(err)
+	}
+	route, err := router.New([]command.Command{
+		{
+			Name:    "later",
+			Handler: "queue",
+			Config:  map[string]any{"command": "deploy"},
+			Parameters: map[string]command.Parameter{
+				"env":    {Type: "string", Required: true},
+				"secret": {Type: "string", Required: true},
+			},
+		},
+		{
+			Name:    "deploy",
+			Handler: "capture",
+			Parameters: map[string]command.Parameter{
+				"env":    {Type: "string", Required: true},
+				"secret": {Type: "string", Required: true, Sensitive: true},
+			},
+		},
+	}, reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := New(st, route, &testSender{}, "relay@example.com", []string{"me@example.com"}, "secret")
+	raw := "From: me@example.com\r\nSubject: later\r\nMessage-ID: <queue-wrapper-redact>\r\nX-MailRelay-Token: secret\r\n\r\nenv=prod\nsecret=queued-secret\n"
+
+	if err := a.Process(context.Background(), io.NopCloser(strings.NewReader(raw))); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var execRaw, queueRaw string
+	if err := db.QueryRow(`SELECT params_json FROM executions WHERE message_id='queue-wrapper-redact'`).Scan(&execRaw); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT params_json FROM queue_jobs WHERE idempotency_key='queue-wrapper-redact:later'`).Scan(&queueRaw); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(execRaw, "queued-secret") {
+		t.Fatalf("raw target secret leaked into execution params: %s", execRaw)
+	}
+	if strings.Contains(queueRaw, "queued-secret") {
+		t.Fatalf("raw target secret leaked into queue params: %s", queueRaw)
+	}
+	var execParams map[string]any
+	if err := json.Unmarshal([]byte(execRaw), &execParams); err != nil {
+		t.Fatal(err)
+	}
+	if execParams["secret"] != "[REDACTED]" || execParams["env"] != "prod" {
+		t.Fatalf("unexpected execution params: %s", execRaw)
+	}
+}
+
 func TestReplyFailureUsesConfiguredAttemptsAndBackoff(t *testing.T) {
 	path := t.TempDir() + "/reply-policy.db"
 	st, err := store.Open(path)

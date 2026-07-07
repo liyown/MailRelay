@@ -123,7 +123,13 @@ func (a *App) Process(ctx context.Context, raw io.ReadCloser) error {
 	}
 	persistedParams := m.Request.Params
 	if c, ok := route.Command(m.Request.Name); ok {
-		persistedParams = security.Redact(c, m.Request.Params)
+		redactFrom := c
+		if target, _ := c.Config["command"].(string); target != "" {
+			if targetCommand, found := route.Command(target); found {
+				redactFrom = command.MergeSensitiveParameters(c, targetCommand)
+			}
+		}
+		persistedParams = security.Redact(redactFrom, m.Request.Params)
 	}
 	a.mu.RLock()
 	replyMaxAttempts := a.replyMaxAttempts
