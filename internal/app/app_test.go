@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"github.com/becomeopc/opc-mailrelay/internal/command"
 	"github.com/becomeopc/opc-mailrelay/internal/handler"
@@ -98,6 +100,48 @@ func TestOnceRecordsBadMessageAndContinuesBatch(t *testing.T) {
 	}
 	if len(recv.seen) != 2 || recv.seen[0] != 1 || recv.seen[1] != 2 {
 		t.Fatalf("seen=%v", recv.seen)
+	}
+	got, err := st.MessageState(context.Background(), "uid:1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != store.MessageParseFailed || got.ErrorKind != "parse" {
+		t.Fatalf("unexpected bad message state: %#v", got)
+	}
+}
+
+func TestOnceAuthFailureUsesMessageIDWithoutDeadUIDDuplicate(t *testing.T) {
+	st, err := store.Open(t.TempDir() + "/auth.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	h := &testHandler{}
+	reg := handler.NewRegistry()
+	_ = reg.Register(h)
+	route, _ := router.New([]command.Command{{Name: "push", Handler: "test"}}, reg)
+	sender := &testSender{}
+	a := New(st, route, sender, "relay@example.com", []string{"me@example.com"}, "secret")
+	recv := &batchReceiver{msgs: []mailbox.RawMessage{
+		{UID: 7, Body: []byte("From: me@example.com\r\nSubject: push\r\nMessage-ID: <auth-bad>\r\nX-MailRelay-Token: wrong\r\n\r\n")},
+		{UID: 8, Body: []byte("From: me@example.com\r\nSubject: push\r\nMessage-ID: <auth-good>\r\nX-MailRelay-Token: secret\r\n\r\n")},
+	}}
+	if err := a.Once(context.Background(), recv, 100); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.MessageState(context.Background(), "auth-bad")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != store.MessageAuthFailed || got.ErrorKind != "authentication" {
+		t.Fatalf("unexpected auth failure state: %#v", got)
+	}
+	_, err = st.MessageState(context.Background(), "uid:7")
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("expected no uid dead record, err=%v", err)
+	}
+	if h.calls != 1 || sender.n != 1 {
+		t.Fatalf("handler calls=%d sends=%d", h.calls, sender.n)
 	}
 }
 

@@ -134,6 +134,29 @@ func classify(err error) string {
 	}
 	return "internal"
 }
+
+func messageFailureForUID(uid uint32, err error) (store.MessageUpdate, bool) {
+	kind := classify(err)
+	switch kind {
+	case "parse":
+		return store.MessageUpdate{
+			ID:           fmt.Sprintf("uid:%d", uid),
+			State:        store.MessageParseFailed,
+			ErrorKind:    "parse",
+			ErrorSummary: "parse failed",
+		}, true
+	case "authentication":
+		return store.MessageUpdate{}, false
+	default:
+		return store.MessageUpdate{
+			ID:           fmt.Sprintf("uid:%d", uid),
+			State:        store.MessageDead,
+			ErrorKind:    "message",
+			ErrorSummary: kind,
+		}, true
+	}
+}
+
 func (a *App) Once(ctx context.Context, r mailbox.Receiver, limit int) error {
 	msgs, err := r.Fetch(ctx, limit)
 	if err != nil {
@@ -142,12 +165,9 @@ func (a *App) Once(ctx context.Context, r mailbox.Receiver, limit int) error {
 	for _, m := range msgs {
 		err = a.Process(ctx, mailbox.RawReader(m))
 		if err != nil {
-			_ = a.store.RecordMessageFailure(ctx, store.MessageUpdate{
-				ID:           fmt.Sprintf("uid:%d", m.UID),
-				State:        store.MessageDead,
-				ErrorKind:    "message",
-				ErrorSummary: classify(err),
-			})
+			if update, ok := messageFailureForUID(m.UID, err); ok {
+				_ = a.store.RecordMessageFailure(ctx, update)
+			}
 		}
 		if markErr := r.MarkSeen(ctx, m.UID); markErr != nil {
 			return markErr

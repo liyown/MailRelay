@@ -233,8 +233,24 @@ func (s *Store) FailReply(ctx context.Context, r *Reply, reason string, backoff 
 	if r.Attempts >= r.MaxAttempts {
 		status = "dead"
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE outbox_replies SET status=?,last_error=?,available_at=?,lease_until=NULL WHERE id=?`, status, reason, dbTime(time.Now().Add(backoff)), r.ID)
-	return err
+	now := dbTime(time.Now())
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `UPDATE outbox_replies SET status=?,last_error=?,available_at=?,lease_until=NULL WHERE id=?`, status, reason, dbTime(time.Now().Add(backoff)), r.ID); err != nil {
+		return err
+	}
+	if status == "dead" {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO processed_messages(id,sender,status,reply_pending,command,error_kind,error_summary,updated_at)
+VALUES(?,?,?,?,?,?,?,?)
+ON CONFLICT(id) DO UPDATE SET status=excluded.status,reply_pending=excluded.reply_pending,error_kind=excluded.error_kind,error_summary=excluded.error_summary,updated_at=excluded.updated_at`,
+			r.MessageID, "", MessageDead, 0, "", "reply_delivery", reason, now); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 func (s *Store) ReplyCounts(ctx context.Context) (pending, dead int, err error) {
 	err = s.db.QueryRowContext(ctx, `SELECT count(*) FILTER (WHERE status IN ('pending','running')),count(*) FILTER (WHERE status='dead') FROM outbox_replies`).Scan(&pending, &dead)
@@ -269,7 +285,7 @@ func (s *Store) RecordMessageFailure(ctx context.Context, u MessageUpdate) error
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO processed_messages(id,sender,status,reply_pending,command,error_kind,error_summary,updated_at)
 VALUES(?,?,?,?,?,?,?,?)
-ON CONFLICT(id) DO UPDATE SET sender=excluded.sender,status=excluded.status,reply_pending=excluded.reply_pending,command=excluded.command,error_kind=excluded.error_kind,error_summary=excluded.error_summary,updated_at=excluded.updated_at`,
+ON CONFLICT(id) DO UPDATE SET sender=CASE WHEN excluded.sender='' THEN processed_messages.sender ELSE excluded.sender END,status=excluded.status,reply_pending=excluded.reply_pending,command=CASE WHEN excluded.command='' THEN processed_messages.command ELSE excluded.command END,error_kind=excluded.error_kind,error_summary=excluded.error_summary,updated_at=excluded.updated_at`,
 		u.ID, u.Sender, string(u.State), boolInt(u.ReplyPending), u.Command, u.ErrorKind, u.ErrorSummary, dbTime(time.Now()))
 	return err
 }

@@ -32,6 +32,13 @@ func TestReplyOutboxLeaseRetryAndDeadLetter(t *testing.T) {
 	if err = s.FailReply(ctx, r, "still down", 0); err != nil {
 		t.Fatal(err)
 	}
+	state, err := s.MessageState(ctx, "m1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.State != MessageDead || state.ErrorKind != "reply_delivery" || state.ErrorSummary != "still down" {
+		t.Fatalf("unexpected message state after dead reply: %#v", state)
+	}
 	pending, dead, err := s.ReplyCounts(ctx)
 	if err != nil || pending != 0 || dead != 1 {
 		t.Fatalf("pending=%d dead=%d err=%v", pending, dead, err)
@@ -102,6 +109,33 @@ func TestMessageLifecycleStatesArePersisted(t *testing.T) {
 	}
 	if got.State != MessageExecuting || got.Command != "push" || got.Sender != "me@example.com" {
 		t.Fatalf("unexpected executing state: %#v", got)
+	}
+}
+
+func TestMessageFailureUpdatePreservesExistingSenderAndCommand(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "preserve.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	if err := s.MarkMessageExecuting(ctx, "m1", "me@example.com", "push"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordMessageFailure(ctx, MessageUpdate{
+		ID:           "m1",
+		State:        MessageDead,
+		ErrorKind:    "reply_delivery",
+		ErrorSummary: "smtp unavailable",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.MessageState(ctx, "m1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Sender != "me@example.com" || got.Command != "push" || got.State != MessageDead {
+		t.Fatalf("unexpected preserved state: %#v", got)
 	}
 }
 
