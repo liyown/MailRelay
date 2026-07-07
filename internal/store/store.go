@@ -58,6 +58,29 @@ type Reply struct {
 	AvailableAt           time.Time
 }
 
+type RuntimeEvent struct {
+	ID        int64
+	At        time.Time
+	Severity  string
+	Phase     string
+	MessageID string
+	Command   string
+	Handler   string
+	ErrorKind string
+	Summary   string
+}
+
+type HealthSummary struct {
+	QueuePending   int
+	QueueRunning   int
+	QueueDead      int
+	ReplyPending   int
+	ReplyRunning   int
+	ReplyDead      int
+	StaleExecuting int
+	LatestFailures []RuntimeEvent
+}
+
 const dbTimeLayout = "2006-01-02T15:04:05.000000000Z07:00"
 
 func dbTime(t time.Time) string {
@@ -109,7 +132,9 @@ CREATE TABLE IF NOT EXISTS queue_jobs(id INTEGER PRIMARY KEY AUTOINCREMENT,comma
 CREATE INDEX IF NOT EXISTS queue_ready ON queue_jobs(status,available_at);
 CREATE TABLE IF NOT EXISTS outbox_replies(id INTEGER PRIMARY KEY AUTOINCREMENT,message_id TEXT NOT NULL UNIQUE,recipient TEXT NOT NULL,payload BLOB NOT NULL,max_attempts INTEGER NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,available_at TEXT NOT NULL,lease_until TEXT,status TEXT NOT NULL DEFAULT 'pending',last_error TEXT,created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS outbox_ready ON outbox_replies(status,available_at);
-CREATE TABLE IF NOT EXISTS runtime_state(key TEXT PRIMARY KEY,value TEXT NOT NULL,updated_at TEXT NOT NULL);`)
+CREATE TABLE IF NOT EXISTS runtime_state(key TEXT PRIMARY KEY,value TEXT NOT NULL,updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS runtime_events(id INTEGER PRIMARY KEY AUTOINCREMENT,at TEXT NOT NULL,severity TEXT NOT NULL,phase TEXT NOT NULL,message_id TEXT NOT NULL DEFAULT '',command TEXT NOT NULL DEFAULT '',handler TEXT NOT NULL DEFAULT '',error_kind TEXT NOT NULL DEFAULT '',summary TEXT NOT NULL DEFAULT '');
+CREATE INDEX IF NOT EXISTS runtime_events_recent ON runtime_events(id DESC);`)
 	if err != nil {
 		return err
 	}
@@ -350,6 +375,55 @@ func (s *Store) State(ctx context.Context, k string) (string, error) {
 	var v string
 	err := s.db.QueryRowContext(ctx, `SELECT value FROM runtime_state WHERE key=?`, k).Scan(&v)
 	return v, err
+}
+func (s *Store) AddEvent(ctx context.Context, e RuntimeEvent) error {
+	if e.At.IsZero() {
+		e.At = time.Now()
+	}
+	if e.Severity == "" {
+		e.Severity = "info"
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO runtime_events(at,severity,phase,message_id,command,handler,error_kind,summary) VALUES(?,?,?,?,?,?,?,?)`,
+		dbTime(e.At), e.Severity, e.Phase, e.MessageID, e.Command, e.Handler, e.ErrorKind, e.Summary)
+	return err
+}
+func (s *Store) RecentEvents(ctx context.Context, limit int) ([]RuntimeEvent, error) {
+	if limit < 1 {
+		limit = 1
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id,at,severity,phase,message_id,command,handler,error_kind,summary FROM runtime_events ORDER BY id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RuntimeEvent
+	for rows.Next() {
+		var e RuntimeEvent
+		var at string
+		if err := rows.Scan(&e.ID, &at, &e.Severity, &e.Phase, &e.MessageID, &e.Command, &e.Handler, &e.ErrorKind, &e.Summary); err != nil {
+			return nil, err
+		}
+		e.At, _ = parseDBTime(at)
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+func (s *Store) Health(ctx context.Context) (HealthSummary, error) {
+	var h HealthSummary
+	err := s.db.QueryRowContext(ctx, `SELECT
+		(SELECT count(*) FROM queue_jobs WHERE status='pending'),
+		(SELECT count(*) FROM queue_jobs WHERE status='running'),
+		(SELECT count(*) FROM queue_jobs WHERE status='dead'),
+		(SELECT count(*) FROM outbox_replies WHERE status='pending'),
+		(SELECT count(*) FROM outbox_replies WHERE status='running'),
+		(SELECT count(*) FROM outbox_replies WHERE status='dead'),
+		(SELECT count(*) FROM processed_messages WHERE status='executing')`).
+		Scan(&h.QueuePending, &h.QueueRunning, &h.QueueDead, &h.ReplyPending, &h.ReplyRunning, &h.ReplyDead, &h.StaleExecuting)
+	if err != nil {
+		return h, err
+	}
+	h.LatestFailures, err = s.RecentEvents(ctx, 5)
+	return h, err
 }
 func (s *Store) Enqueue(ctx context.Context, cmd string, params map[string]any, key string, max int, at time.Time) (int64, error) {
 	if max < 1 {

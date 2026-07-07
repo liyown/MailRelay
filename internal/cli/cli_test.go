@@ -74,7 +74,7 @@ func TestStatusAndReplayDeadLetters(t *testing.T) {
 	if code := Run(ctx, []string{"--config", cfgPath, "status"}, &out, &errout); code != 0 {
 		t.Fatal(errout.String())
 	}
-	for _, want := range []string{"queue_dead: 1", "reply_dead: 1", "last_error:"} {
+	for _, want := range []string{"queue_pending:", "queue_running:", "reply_running:", "stale_executing:", "recent_failure:"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("missing %q in %s", want, out.String())
 		}

@@ -221,3 +221,32 @@ func TestQueueDeadLetterReplayAndLatestFailure(t *testing.T) {
 		t.Fatalf("depth=%d err=%v", depth, err)
 	}
 }
+
+func TestRuntimeEventsAndHealthSummary(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "health.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	if err := s.AddEvent(ctx, RuntimeEvent{Severity: "error", Phase: "reload", ErrorKind: "config", Summary: "invalid yaml"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkMessageExecuting(ctx, "stale-1", "me@example.com", "push"); err != nil {
+		t.Fatal(err)
+	}
+	events, err := s.RecentEvents(ctx, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Phase != "reload" || events[0].Summary != "invalid yaml" {
+		t.Fatalf("events=%#v", events)
+	}
+	health, err := s.Health(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if health.StaleExecuting != 1 || len(health.LatestFailures) != 1 {
+		t.Fatalf("health=%#v", health)
+	}
+}

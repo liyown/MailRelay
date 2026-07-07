@@ -59,5 +59,12 @@ commands:
 	if err = r.reloadIfChanged(context.Background()); err == nil {
 		t.Fatal("expected invalid reload")
 	}
+	events, err := r.store.RecentEvents(context.Background(), 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) == 0 || events[0].Phase != "reload" || events[0].ErrorKind != "config" {
+		t.Fatalf("events=%#v", events)
+	}
 	check("new")
 }

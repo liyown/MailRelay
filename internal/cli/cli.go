@@ -177,15 +177,20 @@ func status(path string, out io.Writer) error {
 		return err
 	}
 	fmt.Fprintf(out, "queue_depth: %d\n", depth)
-	pendingReplies, deadReplies, err := s.ReplyCounts(ctx)
+	h, err := s.Health(ctx)
 	if err != nil {
 		return err
 	}
-	queueDead, _, err := s.DeadCounts(ctx)
-	if err != nil {
-		return err
+	fmt.Fprintf(out, "queue_pending: %d\nqueue_running: %d\nqueue_dead: %d\n", h.QueuePending, h.QueueRunning, h.QueueDead)
+	fmt.Fprintf(out, "reply_pending: %d\nreply_running: %d\nreply_dead: %d\n", h.ReplyPending, h.ReplyRunning, h.ReplyDead)
+	fmt.Fprintf(out, "stale_executing: %d\n", h.StaleExecuting)
+	if len(h.LatestFailures) == 0 {
+		fmt.Fprintln(out, "recent_failure: none")
+	} else {
+		for _, e := range h.LatestFailures {
+			fmt.Fprintf(out, "recent_failure: %s %s %s\n", e.Phase, e.ErrorKind, e.Summary)
+		}
 	}
-	fmt.Fprintf(out, "reply_pending: %d\nqueue_dead: %d\nreply_dead: %d\n", pendingReplies, queueDead, deadReplies)
 	lastPoll, stateErr := s.State(ctx, "last_poll")
 	if errors.Is(stateErr, sql.ErrNoRows) || lastPoll == "" {
 		lastPoll = "never"

@@ -77,6 +77,17 @@ func (a *App) Process(ctx context.Context, raw io.ReadCloser) error {
 	if c, ok := route.Command(m.Request.Name); ok {
 		handlerName = c.Handler
 	}
+	if execErr != nil {
+		_ = a.store.AddEvent(ctx, store.RuntimeEvent{
+			Severity:  "error",
+			Phase:     "handler",
+			MessageID: m.Request.MessageID,
+			Command:   m.Request.Name,
+			Handler:   handlerName,
+			ErrorKind: safeErr,
+			Summary:   "handler failed",
+		})
+	}
 	id, err := a.store.RecordExecutionAndReply(ctx, store.Execution{MessageID: m.Request.MessageID, Command: m.Request.Name, Handler: handlerName, Status: status, Summary: res.Summary, Error: safeErr, StartedAt: started, Duration: time.Since(started)}, m.Request.Params, m.Request.Sender, reply, 5)
 	if err != nil {
 		return err
@@ -90,6 +101,7 @@ func (a *App) deliverReply(ctx context.Context, id int64, sender mailbox.Sender)
 		return false, err
 	}
 	if err = sender.Send(ctx, r.Recipient, r.Payload); err != nil {
+		_ = a.store.AddEvent(ctx, store.RuntimeEvent{Severity: "error", Phase: "reply", MessageID: r.MessageID, ErrorKind: "dependency", Summary: err.Error()})
 		if e := a.store.FailReply(ctx, r, err.Error(), a.replyBackoff); e != nil {
 			return true, e
 		}
@@ -106,6 +118,7 @@ func (a *App) RunOneReply(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	if err = sender.Send(ctx, r.Recipient, r.Payload); err != nil {
+		_ = a.store.AddEvent(ctx, store.RuntimeEvent{Severity: "error", Phase: "reply", MessageID: r.MessageID, ErrorKind: "dependency", Summary: err.Error()})
 		if e := a.store.FailReply(ctx, r, err.Error(), a.replyBackoff); e != nil {
 			return true, e
 		}

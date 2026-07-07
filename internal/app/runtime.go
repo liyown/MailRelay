@@ -118,9 +118,11 @@ func (r *Runtime) Run(ctx context.Context) error {
 			return nil
 		}
 		if err := r.reloadIfChanged(ctx); err != nil {
+			_ = r.store.AddEvent(ctx, store.RuntimeEvent{Severity: "error", Phase: "reload", ErrorKind: "config", Summary: err.Error()})
 			slog.Error("configuration reload rejected", "error", err)
 		}
 		if err := r.Once(ctx); err != nil {
+			_ = r.store.AddEvent(context.Background(), store.RuntimeEvent{Severity: "error", Phase: "receiver", ErrorKind: "dependency", Summary: err.Error()})
 			_ = r.store.SetState(context.Background(), "last_runtime_error", err.Error())
 			slog.Error("mail poll failed", "error", err)
 			select {
@@ -159,16 +161,19 @@ func (r *Runtime) reloadIfChanged(ctx context.Context) error {
 	}
 	cfg, err := config.Load(r.path)
 	if err != nil {
+		_ = r.store.AddEvent(ctx, store.RuntimeEvent{Severity: "error", Phase: "reload", ErrorKind: "config", Summary: err.Error()})
 		return err
 	}
 	reg, route, err := buildRouter(cfg, r.store, r.custom)
 	if err != nil {
+		_ = r.store.AddEvent(ctx, store.RuntimeEvent{Severity: "error", Phase: "reload", ErrorKind: "config", Summary: err.Error()})
 		return err
 	}
 	r.mu.RLock()
 	old := r.cfg
 	r.mu.RUnlock()
 	if err = r.updateCatalog(ctx, old.Commands, cfg.Commands); err != nil {
+		_ = r.store.AddEvent(ctx, store.RuntimeEvent{Severity: "error", Phase: "reload", ErrorKind: "config", Summary: err.Error()})
 		return err
 	}
 	r.mu.Lock()
