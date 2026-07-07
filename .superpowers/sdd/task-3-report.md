@@ -48,6 +48,7 @@ Implemented:
 
 - runtime config fields for experimental opt-in and retry/backoff defaults
 - runtime YAML decode for duration strings and `config_reload` defaulting
+- load-time default seeding so `runtime.config_reload` stays `true` even when the entire `runtime` section is omitted, while explicit `false` is preserved
 - experimental handler validation gate
 - reload short-circuit when `runtime.config_reload` is `false`
 - doctor output split into `local checks:` and `network checks: skipped`
@@ -80,6 +81,7 @@ All of the above passed.
   - `queue_max_attempts = 3`
   - `initial_backoff = 1m`
   - `max_backoff = 30m`
+- `runtime.config_reload` now defaults to `true` both when the field is omitted and when the entire `runtime` block is absent.
 - Hot reload is now fully disabled when `runtime.config_reload: false`.
 - `doctor` now labels local checks clearly and skips active network dialing by default.
 - `soak` now reports health-based dead/pending/stale counters and fails on any non-zero invariant breach.
