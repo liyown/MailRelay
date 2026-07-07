@@ -17,5 +17,17 @@ export default defineConfig({
     },
   },
   resolve: { alias: { "@": path.resolve(__dirname, "./src") } },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("recharts") || id.includes("d3-")) return "charts";
+          if (id.includes("@tanstack")) return "query";
+          if (id.includes("radix-ui") || id.includes("@radix-ui")) return "ui";
+          if (id.includes("react")) return "react";
+        },
+      },
+    },
+  },
   plugins: [react(), tailwindcss()],
 });

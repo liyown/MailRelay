@@ -25,6 +25,27 @@ mailrelay run
 
 Secrets can be environment references such as `${IMAP_PASSWORD}`. An unresolved reference is rejected. Keep the configuration file readable only by the service account.
 
+## Web console
+
+The optional operations console is embedded in the MailRelay binary and is disabled by default. Generate an Argon2id administrator hash without placing the password in shell history:
+
+```bash
+MAILRELAY_ADMIN_PASSWORD='choose-a-strong-password' mailrelay hash-password
+```
+
+Store the resulting hash and independent secrets through environment references:
+
+```yaml
+web:
+  enabled: true
+  address: 127.0.0.1:8787
+  session_secret: "${MAILRELAY_SESSION_SECRET}"
+  admin_password_hash: "${MAILRELAY_ADMIN_PASSWORD_HASH}"
+  session_ttl: 8h
+```
+
+Open `http://127.0.0.1:8787`. Phase 1 is read-only except for login/logout. The API never returns mailbox credentials, Command tokens, handler secrets, full mail bodies, or raw provider errors. Keep the default loopback binding unless the console is placed behind a trusted HTTPS reverse proxy.
+
 ## Sending a command
 
 Send mail from an allowlisted address:
@@ -127,6 +148,7 @@ mailrelay replay queue ID  replay one dead queue job
 mailrelay replay reply ID  replay one dead SMTP reply
 mailrelay soak --duration 72h  run the live reliability acceptance check
 mailrelay version  print version, commit, and build time
+mailrelay hash-password  generate the Web console Argon2id password hash
 mailrelay help     print CLI usage
 ```
 

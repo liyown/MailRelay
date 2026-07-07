@@ -42,6 +42,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
@@ -66,29 +67,29 @@ function Logo() {
   return <div aria-label="MailRelay" className="flex items-center gap-2.5 px-7 py-5"><PaperPlaneTilt weight="fill" className="size-7 text-primary" /><span className="text-[22px] font-semibold tracking-tight">Mail<span className="text-primary">Relay</span></span></div>;
 }
 
-function SideNav({ page, setPage, compact = false }: { page: Page; setPage: (page: Page) => void; compact?: boolean }) {
+function SideNav({ page, setPage, compact = false, onNavigate }: { page: Page; setPage: (page: Page) => void; compact?: boolean; onNavigate?: () => void }) {
   return <div className={cn("flex h-full flex-col bg-sidebar", compact ? "w-full" : "w-[224px] border-r border-border") }>
     <Logo />
-    <div className="mx-4 mb-5 flex h-10 items-center justify-between rounded-lg border border-border bg-card px-3 text-sm">
-      <span className="flex items-center gap-2"><Envelope className="size-4" />生产环境</span><CaretDown className="size-3.5" />
-    </div>
     <nav className="space-y-1 px-3" aria-label="主导航">
-      {navItems.map(({ id, label, icon: Icon }) => <button key={id} type="button" onClick={() => setPage(id)} className={cn("relative flex h-11 w-full items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors", page === id ? "bg-accent text-accent-foreground" : "text-foreground/80 hover:bg-muted") }>
+      {navItems.map(({ id, label, icon: Icon }) => <button key={id} type="button" onClick={() => { setPage(id); onNavigate?.(); }} className={cn("relative flex h-11 w-full items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors", page === id ? "bg-accent text-accent-foreground" : "text-foreground/80 hover:bg-muted") }>
         {page === id && <span className="absolute -left-3 h-7 w-0.5 rounded-r bg-primary" />}<Icon className="size-[19px]" />{label}
       </button>)}
     </nav>
-    <div className="mt-auto border-t border-border p-4"><button className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"><SidebarSimple className="size-4" />收起</button></div>
+    <div className="mt-auto border-t border-border p-4 text-xs text-muted-foreground">只读运行控制台</div>
   </div>;
 }
 
 function Header({ onMobileNav, session }: { onMobileNav: React.ReactNode; session: Session }) {
   const queryClient = useQueryClient();
   const logout = useMutation({ mutationFn: () => api.logout(session.csrf), onSuccess: () => { queryClient.removeQueries(); } });
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const commandsResult = useQuery({ queryKey: ["commands"], queryFn: api.commands, enabled: searchOpen });
+  const matches = (commandsResult.data?.items ?? []).filter((item) => `${item.name} ${item.description} ${item.handler}`.toLowerCase().includes(search.toLowerCase())).slice(0, 8);
   return <header className="flex h-[72px] items-center gap-4 border-b border-border bg-card/90 px-5 backdrop-blur lg:px-8">
     {onMobileNav}
-    <button className="hidden h-10 min-w-0 max-w-[480px] flex-1 items-center gap-3 rounded-lg border border-border bg-background px-4 text-left text-sm text-muted-foreground md:flex">
-      <MagnifyingGlass className="size-4" /><span className="truncate">搜索命令、ID、收件人、主题或内容...</span><kbd className="ml-auto text-xs">⌘ K</kbd>
-    </button>
+    <div className="hidden h-10 w-[164px] shrink-0 items-center rounded-lg border border-border bg-background px-3 text-sm lg:flex"><Envelope className="mr-2 size-4" />生产环境</div>
+    <Dialog open={searchOpen} onOpenChange={setSearchOpen}><DialogTrigger asChild><button className="hidden h-10 min-w-0 max-w-[480px] flex-1 items-center gap-3 rounded-lg border border-border bg-background px-4 text-left text-sm text-muted-foreground md:flex"><MagnifyingGlass className="size-4" /><span className="truncate">搜索 Command...</span><kbd className="ml-auto text-xs">⌘ K</kbd></button></DialogTrigger><DialogContent><DialogHeader><DialogTitle>搜索 Command</DialogTitle><DialogDescription>在已声明的命令目录中搜索名称、描述或处理器。</DialogDescription></DialogHeader><Input autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder="输入名称或处理器" /><div className="max-h-72 space-y-2 overflow-y-auto">{matches.map((item) => <button key={item.name} onClick={() => setSearchOpen(false)} className="flex w-full items-center justify-between rounded-lg border border-border p-3 text-left hover:bg-muted"><span><strong className="block font-mono text-sm">{item.name}</strong><small className="text-muted-foreground">{item.description || item.handler}</small></span><Badge variant="outline">{item.maturity}</Badge></button>)}{!commandsResult.isPending && matches.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">没有匹配的 Command</p>}</div></DialogContent></Dialog>
     <div className="ml-auto flex items-center gap-2 md:gap-4">
       <div className="hidden items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium sm:flex"><span className="size-2 rounded-full bg-emerald-600" />系统健康<br />正常</div>
       <IconButton label="通知"><Bell /></IconButton><IconButton label="帮助"><Question /></IconButton>
@@ -109,7 +110,7 @@ function PanelTitle({ children, action }: { children: React.ReactNode; action?: 
   return <CardHeader className="flex-row items-center justify-between border-b border-border px-5 py-4"><CardTitle className="text-base font-semibold">{children}</CardTitle>{action}</CardHeader>;
 }
 
-function Dashboard() {
+function Dashboard({ onOpenExecutions }: { onOpenExecutions: () => void }) {
   const [range, setRange] = useState("24h");
   const dashboard = useQuery({ queryKey: ["dashboard", range], queryFn: () => api.dashboard(range) });
   const data = dashboard.data;
@@ -124,7 +125,7 @@ function Dashboard() {
       </div>
       <div className="space-y-4"><HealthPanel data={data} /><QueuePanel data={data} /><DistributionPanel data={data} /></div>
     </div>
-    <ExecutionTable compact items={data?.recent_executions} />
+    <ExecutionTable compact items={data?.recent_executions} onViewAll={onOpenExecutions} />
   </>;
 }
 
@@ -135,7 +136,7 @@ function EventCallout({ event }: { event?: DashboardData["recent_events"][number
 
 function HealthPanel({ data }: { data?: DashboardData }) {
   const items = [["处理器", `${data?.active_handlers ?? 0} 活跃`, "", true], ["命令执行", `${data?.execution_count ?? 0} 次`, `${data?.success_count ?? 0} 成功`, true], ["待处理任务", `${(data?.queue.pending ?? 0) + (data?.replies.pending ?? 0)} 个`, "", true], ["死信队列", `${(data?.queue.dead ?? 0) + (data?.replies.dead ?? 0)} 待处理`, "", (data?.queue.dead ?? 0) + (data?.replies.dead ?? 0) === 0]];
-  return <Card className="shadow-none"><PanelTitle action={<button className="text-sm font-medium text-primary">查看详情</button>}>运行健康状态</PanelTitle><CardContent className="grid grid-cols-2 p-0 md:grid-cols-4">{items.map(([label, first, second, ok]) => <div key={String(label)} className="border-r border-border p-4 last:border-0"><div className="flex items-center gap-2 text-sm font-medium">{ok ? <CheckCircle weight="fill" className="size-5 text-emerald-600" /> : <Warning weight="fill" className="size-5 text-amber-500" />}{label}</div><div className="mt-3 text-sm">{first}</div><div className={cn("mt-1 text-xs", ok ? "text-muted-foreground" : "text-primary")}>{second}</div></div>)}</CardContent></Card>;
+  return <Card className="shadow-none"><PanelTitle>运行健康状态</PanelTitle><CardContent className="grid grid-cols-2 p-0 md:grid-cols-4">{items.map(([label, first, second, ok]) => <div key={String(label)} className="border-r border-border p-4 last:border-0"><div className="flex items-center gap-2 text-sm font-medium">{ok ? <CheckCircle weight="fill" className="size-5 text-emerald-600" /> : <Warning weight="fill" className="size-5 text-amber-500" />}{label}</div><div className="mt-3 text-sm">{first}</div><div className={cn("mt-1 text-xs", ok ? "text-muted-foreground" : "text-primary")}>{second}</div></div>)}</CardContent></Card>;
 }
 
 function QueuePanel({ data }: { data?: DashboardData }) {
@@ -151,21 +152,34 @@ function DistributionPanel({ data }: { data?: DashboardData }) {
   return <Card className="shadow-none"><PanelTitle>工作负载分布</PanelTitle><CardContent className="flex items-center gap-6 p-5"><div className="relative size-28 shrink-0"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={chart} dataKey="value" innerRadius={36} outerRadius={54} stroke="none">{chart.map((_, index) => <Cell key={colors[index]} fill={colors[index]} />)}</Pie></PieChart></ResponsiveContainer><div className="pointer-events-none absolute inset-0 grid place-items-center text-center"><span className="text-xl font-semibold leading-none">{total}<small className="mt-1 block text-[10px] font-normal text-muted-foreground">总计</small></span></div></div><div className="grid flex-1 gap-2 text-xs">{[["队列待处理", values[0]], ["队列运行中", values[1]], ["队列死信", values[2]], ["回复待处理", values[3]], ["回复死信", values[4]]].map(([label, value], index) => <div key={String(label)} className="flex justify-between"><span><i className="mr-2 inline-block size-1.5 rounded-full" style={{ background: colors[index] }} />{label}</span><span>{value}　{percentages[index]}%</span></div>)}</div></CardContent></Card>;
 }
 
-function ExecutionTable({ compact = false, items }: { compact?: boolean; items?: DashboardData["recent_executions"] }) {
+function downloadExecutions(items: DashboardData["recent_executions"]) {
+  const rows = [["id", "command", "sender", "status", "handler", "duration_ms", "started_at"], ...items.map((item) => [item.id, item.command, item.sender ?? "", item.status, item.handler, item.duration_ms, item.started_at])];
+  const csv = rows.map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(",")).join("\n");
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = "mailrelay-executions.csv";
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function ExecutionTable({ compact = false, items, onViewAll }: { compact?: boolean; items?: DashboardData["recent_executions"]; onViewAll?: () => void }) {
   const records = items ?? [];
-  return <Card className="mt-4 overflow-hidden shadow-none"><PanelTitle action={<div className="hidden gap-2 md:flex"><Button variant="outline"><Export />导出</Button></div>}>{compact ? "最近执行记录" : "执行记录"}</PanelTitle><div className="overflow-x-auto"><Table><TableHeader><TableRow>{["执行 ID", "命令", "发送者", "状态", "处理器", "耗时", "执行时间"].map(x => <TableHead key={x}>{x}</TableHead>)}</TableRow></TableHeader><TableBody>{records.map(item => <TableRow key={item.id}><TableCell className="font-mono text-xs">EXE-{item.id}</TableCell><TableCell>{item.command}</TableCell><TableCell>{item.sender || "—"}</TableCell><TableCell><Badge className={item.status === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-red-200 bg-red-50 text-red-700"} variant="outline">{item.status === "success" ? "成功" : "失败"}</Badge></TableCell><TableCell>{item.handler}</TableCell><TableCell>{(item.duration_ms / 1000).toFixed(2)}s</TableCell><TableCell>{new Date(item.started_at).toLocaleString("zh-CN")}</TableCell></TableRow>)}{records.length === 0 && <TableRow><TableCell colSpan={7} className="h-24 text-center text-muted-foreground">暂无执行记录</TableCell></TableRow>}</TableBody></Table></div>{compact && <button className="w-full border-t border-border py-3 text-sm font-medium text-primary">查看全部执行记录　→</button>}</Card>;
+  return <Card className="mt-4 overflow-hidden shadow-none"><PanelTitle action={<div className="hidden gap-2 md:flex"><Button variant="outline" onClick={() => downloadExecutions(records)} disabled={records.length === 0}><Export />导出</Button></div>}>{compact ? "最近执行记录" : "执行记录"}</PanelTitle><div className="overflow-x-auto"><Table><TableHeader><TableRow>{["执行 ID", "命令", "发送者", "状态", "处理器", "耗时", "执行时间"].map(x => <TableHead key={x}>{x}</TableHead>)}</TableRow></TableHeader><TableBody>{records.map(item => <TableRow key={item.id}><TableCell className="font-mono text-xs">EXE-{item.id}</TableCell><TableCell>{item.command}</TableCell><TableCell>{item.sender || "—"}</TableCell><TableCell><Badge className={item.status === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-red-200 bg-red-50 text-red-700"} variant="outline">{item.status === "success" ? "成功" : "失败"}</Badge></TableCell><TableCell>{item.handler}</TableCell><TableCell>{(item.duration_ms / 1000).toFixed(2)}s</TableCell><TableCell>{new Date(item.started_at).toLocaleString("zh-CN")}</TableCell></TableRow>)}{records.length === 0 && <TableRow><TableCell colSpan={7} className="h-24 text-center text-muted-foreground">暂无执行记录</TableCell></TableRow>}</TableBody></Table></div>{compact && onViewAll && <button onClick={onViewAll} className="w-full border-t border-border py-3 text-sm font-medium text-primary hover:bg-muted">查看全部执行记录　→</button>}</Card>;
 }
 
 function CommandsPage() {
   const result = useQuery({ queryKey: ["commands"], queryFn: api.commands });
   const [search, setSearch] = useState("");
   const items = (result.data?.items ?? []).filter((item) => `${item.name} ${item.description} ${item.handler}`.toLowerCase().includes(search.toLowerCase()));
-  return <PageFrame title="Command" description="预先声明、可审计的远程命令目录"><Card className="shadow-none"><PanelTitle action={<Input className="w-[220px]" placeholder="筛选命令..." value={search} onChange={(event) => setSearch(event.target.value)} />}>命令目录</PanelTitle><Table><TableHeader><TableRow>{["命令标识", "说明", "处理器", "成熟度", "参数数", "操作"].map(x => <TableHead key={x}>{x}</TableHead>)}</TableRow></TableHeader><TableBody>{items.map(item => <TableRow key={item.name}><TableCell className="font-mono text-xs">{item.name}</TableCell><TableCell>{item.description || "—"}</TableCell><TableCell>{item.handler}</TableCell><TableCell><Badge variant="outline" className={item.maturity === "Stable" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}>{item.maturity}</Badge></TableCell><TableCell>{item.parameter_count}</TableCell><TableCell><Button size="sm" variant="ghost">查看</Button></TableCell></TableRow>)}{!result.isPending && items.length === 0 && <TableRow><TableCell colSpan={6} className="h-24 text-center text-muted-foreground">没有匹配的 Command</TableCell></TableRow>}</TableBody></Table></Card></PageFrame>;
+  return <PageFrame title="Command" description="预先声明、可审计的远程命令目录"><Card className="shadow-none"><PanelTitle action={<Input className="w-[220px]" placeholder="筛选命令..." value={search} onChange={(event) => setSearch(event.target.value)} />}>命令目录</PanelTitle><Table><TableHeader><TableRow>{["命令标识", "说明", "处理器", "成熟度", "参数数"].map(x => <TableHead key={x}>{x}</TableHead>)}</TableRow></TableHeader><TableBody>{items.map(item => <TableRow key={item.name}><TableCell className="font-mono text-xs">{item.name}</TableCell><TableCell>{item.description || "—"}</TableCell><TableCell>{item.handler}</TableCell><TableCell><Badge variant="outline" className={item.maturity === "Stable" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"}>{item.maturity}</Badge></TableCell><TableCell>{item.parameter_count}</TableCell></TableRow>)}{!result.isPending && items.length === 0 && <TableRow><TableCell colSpan={5} className="h-24 text-center text-muted-foreground">没有匹配的 Command</TableCell></TableRow>}</TableBody></Table></Card></PageFrame>;
 }
 
 function ExecutionsPage() {
-  const result = useQuery({ queryKey: ["executions"], queryFn: () => api.executions({ limit: 50 }) });
-  return <PageFrame title="执行记录" description="所有命令的不可变审计轨迹"><ExecutionTable items={result.data?.items} /></PageFrame>;
+  const [status, setStatus] = useState("all");
+  const [commandName, setCommandName] = useState("");
+  const result = useQuery({ queryKey: ["executions", status, commandName], queryFn: () => api.executions({ limit: 50, status: status === "all" ? undefined : status, command: commandName || undefined }) });
+  return <PageFrame title="执行记录" description="所有命令的不可变审计轨迹" action={<div className="flex gap-2"><Input className="w-40" value={commandName} onChange={(event) => setCommandName(event.target.value)} placeholder="Command 名称" /><Select value={status} onValueChange={setStatus}><SelectTrigger className="w-32"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部状态</SelectItem><SelectItem value="success">成功</SelectItem><SelectItem value="error">失败</SelectItem></SelectContent></Select></div>}><ExecutionTable items={result.data?.items} /></PageFrame>;
 }
 
 function QueuePage() {
@@ -197,8 +211,9 @@ function PageFrame({ title, description, action, children }: { title: string; de
 
 function ConsoleShell({ session }: { session: Session }) {
   const [page, setPage] = useState<Page>("dashboard");
-  const content = useMemo(() => ({ dashboard: <Dashboard />, commands: <CommandsPage />, executions: <ExecutionsPage />, queue: <QueuePage />, logs: <LogsPage />, security: <SettingsPage security />, settings: <SettingsPage /> })[page], [page]);
-  return <TooltipProvider><div className="min-h-screen bg-background text-foreground" data-user={session.user.id}><aside className="fixed inset-y-0 left-0 z-30 hidden lg:block"><SideNav page={page} setPage={setPage} /></aside><div className="lg:pl-[224px]"><Header session={session} onMobileNav={<Sheet><SheetTrigger asChild><Button className="lg:hidden" variant="outline" size="icon"><SidebarSimple /></Button></SheetTrigger><SheetContent side="left" className="w-[270px] p-0"><SideNav page={page} setPage={setPage} compact /></SheetContent></Sheet>} /><main className="mx-auto max-w-[1500px] p-4 lg:p-6">{content}</main></div></div></TooltipProvider>;
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const content = useMemo(() => ({ dashboard: <Dashboard onOpenExecutions={() => setPage("executions")} />, commands: <CommandsPage />, executions: <ExecutionsPage />, queue: <QueuePage />, logs: <LogsPage />, security: <SettingsPage security />, settings: <SettingsPage /> })[page], [page]);
+  return <TooltipProvider><div className="min-h-screen bg-background text-foreground" data-user={session.user.id}><aside className="fixed inset-y-0 left-0 z-30 hidden lg:block"><SideNav page={page} setPage={setPage} /></aside><div className="lg:pl-[224px]"><Header session={session} onMobileNav={<Sheet open={mobileOpen} onOpenChange={setMobileOpen}><SheetTrigger asChild><Button aria-label="打开导航" className="lg:hidden" variant="outline" size="icon"><SidebarSimple /></Button></SheetTrigger><SheetContent side="left" className="w-[270px] p-0"><SideNav page={page} setPage={setPage} compact onNavigate={() => setMobileOpen(false)} /></SheetContent></Sheet>} /><main className="mx-auto max-w-[1500px] p-4 lg:p-6">{content}</main></div></div></TooltipProvider>;
 }
 
 function LoginPage() {
