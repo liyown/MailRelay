@@ -33,6 +33,14 @@ func New(cmds []command.Command, reg *handler.Registry) (*Router, error) {
 	return r, nil
 }
 func (r *Router) Execute(ctx context.Context, req command.Request) (res command.Result, err error) {
+	if err := ctx.Err(); err != nil {
+		return res, err
+	}
+	for _, name := range req.Trace {
+		if name == req.Name {
+			return res, &command.Error{Kind: "policy", Message: "workflow recursion denied"}
+		}
+	}
 	if r.timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, r.timeout)

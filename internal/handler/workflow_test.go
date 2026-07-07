@@ -6,11 +6,41 @@ import (
 	"testing"
 )
 
-type execCapture struct{ names []string }
+type execCapture struct {
+	names []string
+	ids   []string
+}
 
 func (e *execCapture) Execute(_ context.Context, r command.Request) (command.Result, error) {
 	e.names = append(e.names, r.Name)
+	e.ids = append(e.ids, r.MessageID)
 	return command.Result{Status: "success", Data: map[string]any{"ok": true}}, nil
+}
+
+func TestWorkflowStepIDs(t *testing.T) {
+	e := &execCapture{}
+	h := NewWorkflow(10, 4)
+	c := command.Command{Name: "release", Config: map[string]any{"steps": []any{
+		map[string]any{"command": "build"},
+		map[string]any{"command": "build"},
+	}}}
+	_, err := h.Execute(context.Background(), command.Context{
+		Command: c,
+		Request: command.Request{MessageID: "mail-1"},
+		Execute: e,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"mail-1:step:1:build", "mail-1:step:2:build"}
+	if len(e.ids) != len(want) {
+		t.Fatalf("ids=%v, want %v", e.ids, want)
+	}
+	for i := range want {
+		if e.ids[i] != want[i] {
+			t.Fatalf("ids=%v, want %v", e.ids, want)
+		}
+	}
 }
 func TestWorkflow(t *testing.T) {
 	e := &execCapture{}

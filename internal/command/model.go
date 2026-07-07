@@ -30,6 +30,7 @@ type Request struct {
 	Params    map[string]any
 	Received  time.Time
 	InReplyTo string
+	Trace     []string
 }
 
 type Context struct {
