@@ -141,7 +141,7 @@ mailrelay status           show queue depth, Catalog hash, and latest execution
 mailrelay doctor           validate configuration, addresses, SQLite, and command policies
 mailrelay replay queue ID  replay one dead queue job
 mailrelay replay reply ID  replay one dead SMTP reply
-mailrelay soak --duration  run the live reliability acceptance check
+mailrelay soak --duration 72h  run the live reliability acceptance check
 mailrelay version          print version, commit, and build time
 mailrelay help             print CLI usage
 ```
