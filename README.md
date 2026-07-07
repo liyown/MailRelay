@@ -1,12 +1,33 @@
 # MailRelay
 
-MailRelay turns authenticated email into a small, configuration-driven command protocol:
+> Turn authenticated email into safe, auditable automation commands.
+
+A single-binary Go service that converts authenticated email into declared
+commands, dispatches them through a handler registry, and replies through SMTP.
+SQLite stores deduplication keys, execution audits, the generated command
+catalog, runtime health, and queued jobs.
+
+[Documentation](https://liyown.github.io/MailRelay/docs) ·
+[GitHub Pages](https://liyown.github.io/MailRelay/) ·
+[Repository](https://github.com/liyown/MailRelay)
+
+## Why MailRelay
+
+- **Configuration-driven commands.** Define a command, its parameters, and its
+  handler in `mailrelay.yaml`. Email supplies only declared parameters. No SDK,
+  no runtime code.
+- **Maturity-tagged handlers.** Every handler ships with a stability label
+  (`stable`, `beta`, `experimental`) so operators know what is safe for the
+  golden path.
+- **Auditable by default.** SQLite records every message, deduplication,
+  execution, and SMTP reply. A durable outbox and dead-letter replay keep
+  handler execution and SMTP delivery independent.
+
+## Flow
 
 ```text
-Email -> Parser -> Authentication -> Router -> Handler -> Result -> Email reply
+Email → Parser → Authentication → Router → Handler → Result → Email reply
 ```
-
-It is a single-machine Go service. SQLite stores deduplication keys, execution audits, the generated command catalog, runtime health, and queued jobs.
 
 ## Five-minute setup
 
@@ -15,7 +36,8 @@ go install github.com/liyown/MailRelay/cmd/mailrelay@latest
 mailrelay init
 ```
 
-Edit `mailrelay.yaml`, replace all `change-me` values, set the sender allowlist, and declare commands. Check the installation before running it:
+Edit `mailrelay.yaml`, replace every `change-me` value, set the sender
+allowlist, and declare commands. Check the installation before running it:
 
 ```bash
 mailrelay doctor
@@ -23,31 +45,15 @@ mailrelay once
 mailrelay run
 ```
 
-Secrets can be environment references such as `${IMAP_PASSWORD}`. An unresolved reference is rejected. Keep the configuration file readable only by the service account.
+Secrets can be environment references such as `${IMAP_PASSWORD}`. An
+unresolved reference is rejected. Keep the configuration file readable only
+by the service account. See
+[Installation](https://liyown.github.io/MailRelay/docs/getting-started/installation)
+and
+[Configuration](https://liyown.github.io/MailRelay/docs/getting-started/configuration)
+for the full key list.
 
-## Sending a command
-
-Send mail from an allowlisted address:
-
-```text
-Subject: push
-X-MailRelay-Token: your-token
-
-message=hello
-```
-
-JSON bodies are supported with `Content-Type: application/json`. The reserved `_token` body field can be used when the sending client cannot add headers. A header token takes precedence. `Message-ID` is used for durable deduplication; messages without one receive a deterministic content hash.
-
-## Discovery
-
-Discovery is generated from `commands`; there is no separate command manual.
-
-- Subject `help` returns every command and description.
-- Subject `help deploy` returns the command description, parameters, required markers, and examples.
-- Startup and valid configuration reloads calculate a canonical Catalog hash.
-- SQLite stores the Catalog snapshot. Changes produce `Added`, `Removed`, and `Updated` sections and notify `runtime.catalog_notify` recipients.
-
-Example command:
+## Declare a command
 
 ```yaml
 commands:
@@ -66,84 +72,82 @@ commands:
       body: '{"message":"{{message}}"}'
 ```
 
-Parameter types are `string`, `integer`, `number`, and `boolean`. Mark a parameter `sensitive: true` to redact it from audit records.
+A header token takes precedence; the reserved `_token` body field is for
+clients that cannot add headers. `Message-ID` deduplicates; messages without
+one receive a deterministic content hash. See
+[First command](https://liyown.github.io/MailRelay/docs/getting-started/first-command)
+for the end-to-end walkthrough.
+
+## Discovery
+
+Discovery is generated from `commands`; there is no separate manual.
+
+- Subject `help` returns every command and description.
+- Subject `help deploy` returns the command description, parameters, required
+  markers, and examples.
+- Startup and valid configuration reloads calculate a canonical Catalog hash.
+- SQLite stores the catalog snapshot. Changes produce `Added`, `Removed`, and
+  `Updated` sections and notify `runtime.catalog_notify` recipients.
+
+See [Discovery](https://liyown.github.io/MailRelay/docs/concepts/discovery)
+for the request flow and notification format.
 
 ## Handlers
 
-All handlers implement the same consumer-side interface. The Router only resolves the configured handler name.
+| Handler    | Stability     | Transport                       | Reference |
+| ---------- | ------------- | ------------------------------- | --------- |
+| `http`     | Stable        | HTTPS, allowlisted hostname     | [http-webhook](https://liyown.github.io/MailRelay/docs/handlers/http-webhook) |
+| `webhook`  | Stable        | HTTPS with HMAC signature       | [http-webhook](https://liyown.github.io/MailRelay/docs/handlers/http-webhook) |
+| `workflow` | Beta          | Internal command composition    | [workflow-queue](https://liyown.github.io/MailRelay/docs/handlers/workflow-queue) |
+| `queue`    | Beta          | Local SQLite worker             | [workflow-queue](https://liyown.github.io/MailRelay/docs/handlers/workflow-queue) |
+| `plugin`   | Experimental  | Subprocess, JSON stdio          | [plugin-shell](https://liyown.github.io/MailRelay/docs/handlers/plugin-shell) |
+| `shell`    | Experimental  | Subprocess, argument vector     | [plugin-shell](https://liyown.github.io/MailRelay/docs/handlers/plugin-shell) |
+| `agent`    | Experimental  | OpenAI-compatible chat API      | [agent-mcp](https://liyown.github.io/MailRelay/docs/handlers/agent-mcp) |
+| `mcp`      | Experimental  | JSON-RPC over HTTP or stdio     | [agent-mcp](https://liyown.github.io/MailRelay/docs/handlers/agent-mcp) |
 
-Support levels are part of generated Discovery output:
+Custom Go handlers can be registered by applications embedding MailRelay; the
+runtime does not load arbitrary code. Full configuration keys, transport
+limits, and maturity criteria live in the
+[handler reference](https://liyown.github.io/MailRelay/docs/handlers).
 
-- **Stable:** `http`, `webhook` — supported for the v0.1 golden path.
-- **Beta:** `workflow`, `queue` — suitable for controlled use with audit monitoring.
-- **Experimental:** `plugin`, `shell`, `agent`, `mcp`, and custom handlers — APIs and safety limits may still change.
+## Security and reliability
 
-### `http`
+- Dangerous capabilities are disabled until a command explicitly selects them.
+- Every request requires both an allowlisted sender and a constant-time token
+  match.
+- Outbound HTTP, agent, and MCP hosts must appear in `security.http_hosts`.
+  Resolved private, loopback, link-local, multicast, unspecified,
+  carrier-grade NAT, and metadata addresses are rejected at validation and
+  dial time. Cross-host redirects are rejected.
+- SMTP delivery and handler execution are decoupled by a durable SQLite
+  outbox; SMTP retry never executes a handler twice.
+- Exhausted queue jobs and replies stay in dead-letter state until an
+  operator calls `mailrelay replay`.
+- Logs and SQLite never store tokens, mailbox passwords, API keys, or full
+  mail bodies.
 
-Calls a fixed HTTPS URL. The hostname must be listed in `security.http_hosts`. URL templates are forbidden. Resolved private, loopback, link-local, multicast, unspecified, carrier-grade NAT, and metadata addresses are rejected at validation and dial time. Cross-host redirects are rejected.
-
-Configuration keys: `url`, `method`, `headers`, and `body`.
-
-### `webhook`
-
-POSTs a standard JSON envelope containing version, command, request ID, timestamp, and parameters. `secret` adds an `X-MailRelay-Signature: sha256=...` HMAC header. It uses the same outbound policy as HTTP.
-
-### `workflow`
-
-Runs a bounded list of configured command steps through the Router. Each step has `command` and optional `params`. Values such as `{{env}}` map request parameters. Direct recursion, missing targets, timeouts, and excessive step counts fail safely.
-
-### `queue`
-
-Inserts a target command into the SQLite queue with an idempotency key derived from the message. `max_attempts` bounds retry. The local worker leases jobs transactionally and recovers expired leases after restart.
-
-### `plugin`
-
-Starts a configured absolute executable without a shell. It writes a versioned JSON request to stdin and expects a JSON `Result` on stdout. Output and environment are bounded.
-
-### `shell`
-
-Starts a configured absolute executable directly with an argument array. Each argument is expanded independently, so characters such as `;`, `$()`, and pipes are data rather than shell syntax. Arbitrary executables cannot be selected by email.
-
-### `agent`
-
-Calls a configured OpenAI-compatible chat-completions endpoint. Endpoint, model, system prompt, and API key are fixed by configuration. Email supplies only declared parameters. Add the endpoint host to `security.http_hosts`.
-
-### `mcp`
-
-Calls one allowlisted MCP tool using JSON-RPC over configured HTTP or stdio transport. HTTP is subject to outbound network policy; stdio uses a fixed executable. Email cannot select a server or unlisted tool.
-
-### Custom Go handlers
-
-Applications embedding MailRelay may pass additional `command.Handler` implementations to `app.Build`. Runtime loading of arbitrary code is intentionally unsupported.
+Full security model:
+[Security](https://liyown.github.io/MailRelay/docs/concepts/security).
+Reliability and 72-hour acceptance:
+[Reliability](https://liyown.github.io/MailRelay/docs/operations/reliability).
 
 ## CLI
 
 ```text
-mailrelay init     create a safe single-file configuration
-mailrelay run      run IMAP IDLE, polling fallback, queue worker, and hot reload
-mailrelay once     process one bounded mail and queue batch
-mailrelay status   show queue depth, Catalog hash, and latest execution
-mailrelay doctor   validate configuration, addresses, SQLite, and command policies
+mailrelay init             create a safe single-file configuration
+mailrelay run              run IMAP IDLE, polling fallback, queue worker, and hot reload
+mailrelay once             process one bounded mail and queue batch
+mailrelay status           show queue depth, Catalog hash, and latest execution
+mailrelay doctor           validate configuration, addresses, SQLite, and command policies
 mailrelay replay queue ID  replay one dead queue job
 mailrelay replay reply ID  replay one dead SMTP reply
-mailrelay soak --duration 72h  run the live reliability acceptance check
-mailrelay version  print version, commit, and build time
-mailrelay help     print CLI usage
+mailrelay soak --duration  run the live reliability acceptance check
+mailrelay version          print version, commit, and build time
+mailrelay help             print CLI usage
 ```
 
-Use `--config path` before or after the command, or set `MAILRELAY_CONFIG`.
-
-## Operations and safety
-
-- Dangerous capabilities are disabled until a command explicitly selects them.
-- Every request requires both an allowlisted sender and a constant-time token match.
-- Unknown configuration fields, duplicate commands, invalid parameter types, relative executables, and unallowlisted HTTP hosts fail startup.
-- Configuration reload is parse/validate/build/atomic-swap. Invalid changes are logged and the last valid configuration remains active.
-- IMAP prefers IDLE and falls back to bounded polling/reconnect backoff.
-- Command execution and SMTP delivery are separated by a durable SQLite outbox. SMTP retry never executes a Handler twice.
-- Exhausted queue jobs and replies remain in dead-letter state until an operator uses `mailrelay replay`.
-- Logs and SQLite never store tokens, mailbox passwords, API keys, or full mail bodies.
-- Back up the YAML file and SQLite database together while MailRelay is stopped, or use SQLite's online backup tooling.
+Full reference:
+[CLI](https://liyown.github.io/MailRelay/docs/operations/cli).
 
 ## Development
 
@@ -154,15 +158,20 @@ go vet ./...
 go build ./cmd/mailrelay
 ```
 
-The architecture and accepted security boundaries are documented in `docs/superpowers/specs/2026-07-07-mailrelay-design.md`.
+The architecture and accepted security boundaries are documented in
+[`docs/superpowers/specs/2026-07-07-mailrelay-design.md`](docs/superpowers/specs/2026-07-07-mailrelay-design.md)
+in this repository.
 
-## 72-hour acceptance run
+## Documentation
 
-Use a dedicated mailbox and one Stable HTTP/Webhook command. Start with an empty queue and outbox:
-
-```bash
-mailrelay doctor
-mailrelay soak --duration 72h
-```
-
-During the run, send valid commands, one unauthorized command, duplicate `Message-ID` messages, and temporarily interrupt IMAP, SMTP, and the target HTTP endpoint. Acceptance requires `soak_result: pass`, no unauthorized or duplicate execution in the audit, and no pending/dead reply or queue item. If a deliberate outage exhausts retries, inspect `mailrelay status`, repair the dependency, and explicitly replay the dead item before restarting the acceptance window.
+- [Installation](https://liyown.github.io/MailRelay/docs/getting-started/installation)
+- [First command](https://liyown.github.io/MailRelay/docs/getting-started/first-command)
+- [Configuration](https://liyown.github.io/MailRelay/docs/getting-started/configuration)
+- [Architecture](https://liyown.github.io/MailRelay/docs/concepts/architecture)
+- [Discovery](https://liyown.github.io/MailRelay/docs/concepts/discovery)
+- [Security](https://liyown.github.io/MailRelay/docs/concepts/security)
+- [Storage](https://liyown.github.io/MailRelay/docs/concepts/storage)
+- [Handlers](https://liyown.github.io/MailRelay/docs/handlers)
+- [CLI](https://liyown.github.io/MailRelay/docs/operations/cli)
+- [Reliability and 72-hour acceptance](https://liyown.github.io/MailRelay/docs/operations/reliability)
+- [GitHub Pages deployment](https://liyown.github.io/MailRelay/docs/operations/github-pages)
