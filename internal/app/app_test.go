@@ -294,6 +294,20 @@ func TestRunOneReplyRedactsStoredSMTPFailure(t *testing.T) {
 	if strings.Contains(failure, "vip@example.com") || strings.Contains(failure, "topsecret") {
 		t.Fatalf("raw SMTP data leaked into outbox failure: %q", failure)
 	}
+
+	events, err := st.RecentEvents(context.Background(), 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) == 0 {
+		t.Fatal("expected runtime event")
+	}
+	if events[0].Phase != "reply" || events[0].ErrorKind != "dependency" || events[0].Summary != "reply delivery failed" {
+		t.Fatalf("unexpected runtime event: %#v", events[0])
+	}
+	if strings.Contains(events[0].Summary, "vip@example.com") || strings.Contains(events[0].Summary, "topsecret") {
+		t.Fatalf("raw SMTP data leaked into runtime event: %#v", events[0])
+	}
 }
 
 func TestAuthenticatedHelpMailReturnsGeneratedCatalog(t *testing.T) {

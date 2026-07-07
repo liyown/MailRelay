@@ -27,6 +27,19 @@ type App struct {
 	replyBackoff time.Duration
 }
 
+func runtimeEventSummary(phase string) string {
+	switch phase {
+	case "reply":
+		return "reply delivery failed"
+	case "reload":
+		return "configuration reload rejected"
+	case "receiver":
+		return "mail receiver failed"
+	default:
+		return "runtime failure"
+	}
+}
+
 func New(s *store.Store, r *router.Router, sender mailbox.Sender, from string, allow []string, token string) *App {
 	return &App{store: s, router: r, sender: sender, from: from, allow: allow, token: token, replyBackoff: time.Minute}
 }
@@ -101,7 +114,7 @@ func (a *App) deliverReply(ctx context.Context, id int64, sender mailbox.Sender)
 		return false, err
 	}
 	if err = sender.Send(ctx, r.Recipient, r.Payload); err != nil {
-		_ = a.store.AddEvent(ctx, store.RuntimeEvent{Severity: "error", Phase: "reply", MessageID: r.MessageID, ErrorKind: "dependency", Summary: err.Error()})
+		_ = a.store.AddEvent(ctx, store.RuntimeEvent{Severity: "error", Phase: "reply", MessageID: r.MessageID, ErrorKind: "dependency", Summary: runtimeEventSummary("reply")})
 		if e := a.store.FailReply(ctx, r, err.Error(), a.replyBackoff); e != nil {
 			return true, e
 		}
@@ -118,7 +131,7 @@ func (a *App) RunOneReply(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	if err = sender.Send(ctx, r.Recipient, r.Payload); err != nil {
-		_ = a.store.AddEvent(ctx, store.RuntimeEvent{Severity: "error", Phase: "reply", MessageID: r.MessageID, ErrorKind: "dependency", Summary: err.Error()})
+		_ = a.store.AddEvent(ctx, store.RuntimeEvent{Severity: "error", Phase: "reply", MessageID: r.MessageID, ErrorKind: "dependency", Summary: runtimeEventSummary("reply")})
 		if e := a.store.FailReply(ctx, r, err.Error(), a.replyBackoff); e != nil {
 			return true, e
 		}
