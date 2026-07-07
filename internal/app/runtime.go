@@ -151,6 +151,12 @@ func (r *Runtime) Run(ctx context.Context) error {
 	}
 }
 func (r *Runtime) reloadIfChanged(ctx context.Context) error {
+	r.mu.RLock()
+	reload := r.cfg.Runtime.ConfigReload
+	r.mu.RUnlock()
+	if !reload {
+		return nil
+	}
 	st, err := os.Stat(r.path)
 	if err != nil {
 		return err

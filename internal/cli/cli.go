@@ -110,6 +110,7 @@ func doctor(path string, out io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("configuration: %w", err)
 	}
+	fmt.Fprintln(out, "local checks:")
 	fmt.Fprintln(out, "configuration: ok")
 	for name, address := range map[string]string{"imap": c.Mail.IMAP.Address, "smtp": c.Mail.SMTP.Address} {
 		if address == "" {
@@ -158,6 +159,7 @@ func doctor(path string, out io.Writer) error {
 			fmt.Fprintf(out, "outbound host %s: ok\n", host)
 		}
 	}
+	fmt.Fprintln(out, "network checks: skipped")
 	fmt.Fprintf(out, "commands: %d\n", len(c.Commands))
 	return nil
 }
@@ -282,19 +284,16 @@ func soak(parent context.Context, path string, args []string, out io.Writer) err
 	if err = r.Run(ctx); err != nil {
 		return err
 	}
-	queueDead, replyDead, err := r.Store().DeadCounts(context.Background())
-	if err != nil {
-		return err
-	}
-	pendingReplies, _, err := r.Store().ReplyCounts(context.Background())
+	h, err := r.Store().Health(context.Background())
 	if err != nil {
 		return err
 	}
 	result := "pass"
-	if queueDead > 0 || replyDead > 0 || pendingReplies > 0 {
+	replyPending := h.ReplyPending + h.ReplyRunning
+	if h.QueueDead > 0 || h.ReplyDead > 0 || replyPending > 0 || h.StaleExecuting > 0 {
 		result = "fail"
 	}
-	fmt.Fprintf(out, "duration: %s\nobserved: %s\nqueue_dead: %d\nreply_dead: %d\nreply_pending: %d\nsoak_result: %s\n", duration.String(), time.Since(started).Round(time.Millisecond), queueDead, replyDead, pendingReplies, result)
+	fmt.Fprintf(out, "duration: %s\nobserved: %s\nqueue_dead: %d\nreply_dead: %d\nreply_pending: %d\nstale_executing: %d\nsoak_result: %s\n", duration.String(), time.Since(started).Round(time.Millisecond), h.QueueDead, h.ReplyDead, replyPending, h.StaleExecuting, result)
 	if result != "pass" {
 		return fmt.Errorf("soak invariants failed")
 	}

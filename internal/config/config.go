@@ -51,10 +51,58 @@ type Storage struct {
 	Path string `yaml:"path"`
 }
 type Runtime struct {
-	CommandTimeout string   `yaml:"command_timeout"`
-	ConfigReload   bool     `yaml:"config_reload"`
-	CatalogNotify  []string `yaml:"catalog_notify"`
+	CommandTimeout     string        `yaml:"command_timeout"`
+	ConfigReload       bool          `yaml:"config_reload"`
+	CatalogNotify      []string      `yaml:"catalog_notify"`
+	EnableExperimental bool          `yaml:"enable_experimental"`
+	ReplyMaxAttempts   int           `yaml:"reply_max_attempts"`
+	QueueMaxAttempts   int           `yaml:"queue_max_attempts"`
+	InitialBackoff     time.Duration `yaml:"-"`
+	MaxBackoff         time.Duration `yaml:"-"`
 }
+
+func (r *Runtime) UnmarshalYAML(n *yaml.Node) error {
+	type raw struct {
+		CommandTimeout     string   `yaml:"command_timeout"`
+		ConfigReload       *bool    `yaml:"config_reload"`
+		CatalogNotify      []string `yaml:"catalog_notify"`
+		EnableExperimental bool     `yaml:"enable_experimental"`
+		ReplyMaxAttempts   int      `yaml:"reply_max_attempts"`
+		QueueMaxAttempts   int      `yaml:"queue_max_attempts"`
+		InitialBackoff     string   `yaml:"initial_backoff"`
+		MaxBackoff         string   `yaml:"max_backoff"`
+	}
+	var x raw
+	if err := n.Decode(&x); err != nil {
+		return err
+	}
+	r.CommandTimeout = x.CommandTimeout
+	if x.ConfigReload != nil {
+		r.ConfigReload = *x.ConfigReload
+	} else {
+		r.ConfigReload = true
+	}
+	r.CatalogNotify = x.CatalogNotify
+	r.EnableExperimental = x.EnableExperimental
+	r.ReplyMaxAttempts = x.ReplyMaxAttempts
+	r.QueueMaxAttempts = x.QueueMaxAttempts
+	if x.InitialBackoff != "" {
+		d, err := time.ParseDuration(x.InitialBackoff)
+		if err != nil {
+			return err
+		}
+		r.InitialBackoff = d
+	}
+	if x.MaxBackoff != "" {
+		d, err := time.ParseDuration(x.MaxBackoff)
+		if err != nil {
+			return err
+		}
+		r.MaxBackoff = d
+	}
+	return nil
+}
+
 type Config struct {
 	Mail     Mail                      `yaml:"mail"`
 	Security Security                  `yaml:"security"`
@@ -101,6 +149,18 @@ func Load(path string) (*Config, error) {
 	if c.Mail.IMAP.PollInterval == 0 {
 		c.Mail.IMAP.PollInterval = 30 * time.Second
 	}
+	if c.Runtime.ReplyMaxAttempts == 0 {
+		c.Runtime.ReplyMaxAttempts = 5
+	}
+	if c.Runtime.QueueMaxAttempts == 0 {
+		c.Runtime.QueueMaxAttempts = 3
+	}
+	if c.Runtime.InitialBackoff == 0 {
+		c.Runtime.InitialBackoff = time.Minute
+	}
+	if c.Runtime.MaxBackoff == 0 {
+		c.Runtime.MaxBackoff = 30 * time.Minute
+	}
 	if err = c.Validate(); err != nil {
 		return nil, err
 	}
@@ -130,6 +190,9 @@ func (c *Config) Validate() error {
 		seen[cmd.Name] = true
 		if !known[cmd.Handler] {
 			return fmt.Errorf("unknown handler %q", cmd.Handler)
+		}
+		if command.HandlerMaturity(cmd.Handler) == "Experimental" && !c.Runtime.EnableExperimental {
+			return fmt.Errorf("experimental handler %q requires runtime.enable_experimental", cmd.Handler)
 		}
 		for n, p := range cmd.Parameters {
 			if n == "_token" {

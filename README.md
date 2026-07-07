@@ -138,6 +138,9 @@ Use `--config path` before or after the command, or set `MAILRELAY_CONFIG`.
 - Dangerous capabilities are disabled until a command explicitly selects them.
 - Every request requires both an allowlisted sender and a constant-time token match.
 - Unknown configuration fields, duplicate commands, invalid parameter types, relative executables, and unallowlisted HTTP hosts fail startup.
+- `mailrelay status` reads SQLite health state and reports queue, reply, dead-letter, stale execution, and recent failure summaries.
+- `runtime.config_reload: false` disables hot reload; invalid reloads keep the last valid runtime and are recorded as runtime events.
+- Experimental handlers require explicit opt-in and should not be used for the stable HTTP/Webhook golden path.
 - Configuration reload is parse/validate/build/atomic-swap. Invalid changes are logged and the last valid configuration remains active.
 - IMAP prefers IDLE and falls back to bounded polling/reconnect backoff.
 - Command execution and SMTP delivery are separated by a durable SQLite outbox. SMTP retry never executes a Handler twice.

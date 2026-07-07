@@ -111,8 +111,29 @@ func TestVersionAndZeroDurationSoak(t *testing.T) {
 	if code := Run(context.Background(), []string{"--config", cfg, "soak", "--duration", "0s"}, &out, &errout); code != 0 {
 		t.Fatalf("%s", errout.String())
 	}
-	if !strings.Contains(out.String(), "soak_result: pass") || !strings.Contains(out.String(), "duration: 0s") {
-		t.Fatal(out.String())
+	for _, want := range []string{"duration: 0s", "queue_dead:", "reply_dead:", "reply_pending:", "soak_result: pass"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("missing %q in %s", want, out.String())
+		}
+	}
+}
+
+func TestDoctorLabelsLocalChecksAndSkipsNetworkByDefault(t *testing.T) {
+	d := t.TempDir()
+	cfg := filepath.Join(d, "mailrelay.yaml")
+	var out, errout bytes.Buffer
+	if code := Run(context.Background(), []string{"--config", cfg, "init"}, &out, &errout); code != 0 {
+		t.Fatal(errout.String())
+	}
+	out.Reset()
+	errout.Reset()
+	if code := Run(context.Background(), []string{"--config", cfg, "doctor"}, &out, &errout); code != 0 {
+		t.Fatal(errout.String())
+	}
+	for _, want := range []string{"local checks:", "network checks: skipped"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("missing %q in %s", want, out.String())
+		}
 	}
 }
 
@@ -127,8 +148,16 @@ func TestDoctorWarnsForExperimentalHandler(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _ = f.WriteString("\n  - name: local\n    description: local\n    handler: shell\n    config: {executable: /bin/echo}\n")
 	_ = f.Close()
+	body, err := os.ReadFile(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := strings.Replace(string(body), "  config_reload: true\n", "  config_reload: true\n  enable_experimental: true\n", 1)
+	updated = strings.Replace(updated, "commands:\n", "commands:\n  - name: local\n    description: local\n    handler: shell\n    config: {executable: /bin/echo}\n", 1)
+	if err := os.WriteFile(cfg, []byte(updated), 0600); err != nil {
+		t.Fatal(err)
+	}
 	out.Reset()
 	errout.Reset()
 	if code := Run(context.Background(), []string{"--config", cfg, "doctor"}, &out, &errout); code != 0 {

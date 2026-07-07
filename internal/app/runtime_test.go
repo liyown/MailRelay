@@ -25,9 +25,11 @@ func (r *runCancelReceiver) Idle(context.Context) error {
 
 type failingReceiver struct{ err error }
 
-func (r *failingReceiver) Fetch(context.Context, int) ([]mailbox.RawMessage, error) { return nil, r.err }
-func (r *failingReceiver) MarkSeen(context.Context, uint32) error                    { return nil }
-func (r *failingReceiver) Idle(context.Context) error                                { return nil }
+func (r *failingReceiver) Fetch(context.Context, int) ([]mailbox.RawMessage, error) {
+	return nil, r.err
+}
+func (r *failingReceiver) MarkSeen(context.Context, uint32) error { return nil }
+func (r *failingReceiver) Idle(context.Context) error             { return nil }
 
 type cancelOnFetchReceiver struct {
 	err    error
@@ -188,5 +190,46 @@ commands: []
 	}
 	if strings.Contains(events[0].Summary, "vip@example.com") || strings.Contains(events[0].Summary, "topsecret") {
 		t.Fatalf("raw receiver error leaked into summary: %#v", events[0])
+	}
+}
+
+func TestConfigReloadFalseIgnoresFileChanges(t *testing.T) {
+	d := t.TempDir()
+	path := filepath.Join(d, "mailrelay.yaml")
+	writeConfig := func(desc string) {
+		body := `mail:
+  imap: {address: "imap.example.com:993", username: u, password: p}
+  smtp: {address: "smtp.example.com:465", username: u, password: p, from: relay@example.com}
+security: {token: secret, allow: [me@example.com], http_hosts: [api.example.com]}
+storage: {path: relay.db}
+runtime: {command_timeout: 1s, config_reload: false}
+commands:
+  - name: push
+    description: ` + desc + `
+    handler: http
+    config: {url: "https://api.example.com/push"}
+`
+		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeConfig("old")
+	r, err := Build(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	writeConfig("new")
+	future := time.Now().Add(2 * time.Second)
+	_ = os.Chtimes(path, future, future)
+	if err := r.reloadIfChanged(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	res, err := r.app.Execute(context.Background(), command.Request{Name: "help", Params: map[string]any{"command": "push"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(res.Body, "new") || !strings.Contains(res.Body, "old") {
+		t.Fatalf("reload should be disabled, body=%q", res.Body)
 	}
 }
