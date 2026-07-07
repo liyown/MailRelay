@@ -235,12 +235,66 @@ func (c *Config) Validate() error {
 		byName[cmd.Name] = cmd
 	}
 	for _, cmd := range c.Commands {
-		if cmd.Handler != "queue" {
-			continue
+		switch cmd.Handler {
+		case "queue":
+			target, _ := cmd.Config["command"].(string)
+			if err := validateQueueSchema(cmd, byName[target]); err != nil {
+				return err
+			}
+		case "workflow":
+			if err := validateWorkflowSchema(cmd, byName); err != nil {
+				return err
+			}
 		}
-		target, _ := cmd.Config["command"].(string)
-		if err := validateQueueSchema(cmd, byName[target]); err != nil {
-			return err
+	}
+	return nil
+}
+
+var workflowParamRE = regexp.MustCompile(`\{\{([A-Za-z_][A-Za-z0-9_-]*)\}\}`)
+
+func validateWorkflowSchema(workflow command.Command, byName map[string]command.Command) error {
+	raw, _ := workflow.Config["steps"].([]any)
+	for i, value := range raw {
+		step, _ := value.(map[string]any)
+		targetName, _ := step["command"].(string)
+		target := byName[targetName]
+		params := map[string]any{}
+		if rawParams, exists := step["params"]; exists {
+			var ok bool
+			params, ok = rawParams.(map[string]any)
+			if !ok {
+				return fmt.Errorf("workflow %s step %d params are invalid", workflow.Name, i+1)
+			}
+		}
+		for name, value := range params {
+			targetParam, ok := target.Parameters[name]
+			if !ok {
+				return fmt.Errorf("workflow %s step %d parameter %s is not declared by target %s", workflow.Name, i+1, name, targetName)
+			}
+			text, ok := value.(string)
+			if !ok {
+				continue
+			}
+			for _, match := range workflowParamRE.FindAllStringSubmatch(text, -1) {
+				sourceName := match[1]
+				sourceParam, ok := workflow.Parameters[sourceName]
+				if !ok {
+					return fmt.Errorf("workflow %s step %d references unknown parameter %s", workflow.Name, i+1, sourceName)
+				}
+				if parameterType(sourceParam) != parameterType(targetParam) {
+					return fmt.Errorf("workflow %s parameter %s type does not match target %s parameter %s", workflow.Name, sourceName, targetName, name)
+				}
+				if targetParam.Sensitive && !sourceParam.Sensitive {
+					return fmt.Errorf("workflow %s parameter %s must be sensitive for target %s parameter %s", workflow.Name, sourceName, targetName, name)
+				}
+			}
+		}
+		for name, targetParam := range target.Parameters {
+			if targetParam.Required {
+				if _, ok := params[name]; !ok {
+					return fmt.Errorf("workflow %s step %d must provide target parameter %s", workflow.Name, i+1, name)
+				}
+			}
 		}
 	}
 	return nil

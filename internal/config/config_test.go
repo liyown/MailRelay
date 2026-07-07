@@ -145,6 +145,94 @@ func TestValidateQueueSchema(t *testing.T) {
 	}
 }
 
+func TestValidateWorkflowSchema(t *testing.T) {
+	makeConfig := func(workflow, target command.Command) *Config {
+		return &Config{
+			Security: Security{Token: "secret", Allow: []string{"me@example.com"}, HTTPHosts: []string{"api.example.com"}},
+			Commands: []command.Command{workflow, target},
+		}
+	}
+	validWorkflow := command.Command{
+		Name:    "release",
+		Handler: "workflow",
+		Parameters: map[string]command.Parameter{
+			"env": {Type: "string", Required: true},
+		},
+		Config: map[string]any{"steps": []any{map[string]any{
+			"command": "deploy",
+			"params":  map[string]any{"env": "{{env}}"},
+		}}},
+	}
+	validTarget := command.Command{
+		Name:    "deploy",
+		Handler: "http",
+		Parameters: map[string]command.Parameter{
+			"env": {Type: "string", Required: true},
+		},
+		Config: map[string]any{"url": "https://api.example.com/deploy"},
+	}
+	clone := func(c command.Command) command.Command {
+		out := c
+		out.Parameters = make(map[string]command.Parameter, len(c.Parameters))
+		for name, p := range c.Parameters {
+			out.Parameters[name] = p
+		}
+		out.Config = make(map[string]any, len(c.Config))
+		for name, value := range c.Config {
+			out.Config[name] = value
+		}
+		return out
+	}
+	t.Run("compatible", func(t *testing.T) {
+		if err := makeConfig(validWorkflow, validTarget).Validate(); err != nil {
+			t.Fatal(err)
+		}
+	})
+	cases := []struct {
+		name   string
+		mutate func(*command.Command, *command.Command)
+		want   string
+	}{
+		{
+			name: "unknown target parameter",
+			mutate: func(workflow, _ *command.Command) {
+				workflow.Config["steps"] = []any{map[string]any{"command": "deploy", "params": map[string]any{"region": "cn"}}}
+			},
+			want: "workflow release step 1 parameter region is not declared by target deploy",
+		},
+		{
+			name: "missing required target parameter",
+			mutate: func(workflow, _ *command.Command) {
+				workflow.Config["steps"] = []any{map[string]any{"command": "deploy"}}
+			},
+			want: "workflow release step 1 must provide target parameter env",
+		},
+		{
+			name: "unknown source placeholder",
+			mutate: func(workflow, _ *command.Command) {
+				workflow.Config["steps"] = []any{map[string]any{"command": "deploy", "params": map[string]any{"env": "{{missing}}"}}}
+			},
+			want: "workflow release step 1 references unknown parameter missing",
+		},
+		{
+			name: "sensitive target from non-sensitive source",
+			mutate: func(_ *command.Command, target *command.Command) {
+				target.Parameters["env"] = command.Parameter{Type: "string", Required: true, Sensitive: true}
+			},
+			want: "workflow release parameter env must be sensitive for target deploy parameter env",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			workflow, target := clone(validWorkflow), clone(validTarget)
+			tc.mutate(&workflow, &target)
+			if err := makeConfig(workflow, target).Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate() error=%v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestLoadExpandsAndDescribesCommands(t *testing.T) {
 	t.Setenv("TOKEN", "secret")
 	p := filepath.Join(t.TempDir(), "mailrelay.yaml")
