@@ -102,3 +102,23 @@ commands: []
 		t.Fatalf("unexpected runtime defaults: %#v", c.Runtime)
 	}
 }
+
+func TestRuntimeConfigReloadDefaultsTrueWhenRuntimeOmitted(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "mailrelay.yaml")
+	body := `mail:
+  imap: {address: "imap.example.com:993", username: relay, password: pass}
+  smtp: {address: "smtp.example.com:465", username: relay, password: pass, from: relay@example.com}
+security: {token: secret, allow: [me@example.com]}
+commands: []
+`
+	if err := os.WriteFile(p, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Runtime.ConfigReload {
+		t.Fatalf("expected config_reload default true when runtime omitted, got %#v", c.Runtime)
+	}
+}

@@ -131,7 +131,11 @@ func Load(path string) (*Config, error) {
 	if missing != "" {
 		return nil, fmt.Errorf("environment variable %s is not set", missing)
 	}
-	var c Config
+	c := Config{
+		Runtime: Runtime{
+			ConfigReload: true,
+		},
+	}
 	dec := yaml.NewDecoder(strings.NewReader(string(b)))
 	dec.KnownFields(true)
 	if err = dec.Decode(&c); err != nil {

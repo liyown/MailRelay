@@ -111,7 +111,7 @@ func TestVersionAndZeroDurationSoak(t *testing.T) {
 	if code := Run(context.Background(), []string{"--config", cfg, "soak", "--duration", "0s"}, &out, &errout); code != 0 {
 		t.Fatalf("%s", errout.String())
 	}
-	for _, want := range []string{"duration: 0s", "queue_dead:", "reply_dead:", "reply_pending:", "soak_result: pass"} {
+	for _, want := range []string{"duration: 0s", "queue_dead:", "reply_dead:", "reply_pending:", "stale_executing:", "soak_result: pass"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("missing %q in %s", want, out.String())
 		}
