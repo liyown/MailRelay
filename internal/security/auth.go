@@ -2,7 +2,7 @@ package security
 
 import (
 	"crypto/subtle"
-	"github.com/becomeopc/opc-mailrelay/internal/command"
+	"github.com/liyown/MailRelay/internal/command"
 	"strings"
 )
 

@@ -1,4 +1,4 @@
-module github.com/becomeopc/opc-mailrelay
+module github.com/liyown/MailRelay
 
 go 1.25.0
 

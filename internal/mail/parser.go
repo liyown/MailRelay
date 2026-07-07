@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/becomeopc/opc-mailrelay/internal/command"
+	"github.com/liyown/MailRelay/internal/command"
 )
 
 type Attachment struct {

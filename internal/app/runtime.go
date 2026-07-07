@@ -10,14 +10,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/becomeopc/opc-mailrelay/internal/catalog"
-	"github.com/becomeopc/opc-mailrelay/internal/command"
-	"github.com/becomeopc/opc-mailrelay/internal/config"
-	"github.com/becomeopc/opc-mailrelay/internal/handler"
-	"github.com/becomeopc/opc-mailrelay/internal/mailbox"
-	"github.com/becomeopc/opc-mailrelay/internal/router"
-	"github.com/becomeopc/opc-mailrelay/internal/security"
-	"github.com/becomeopc/opc-mailrelay/internal/store"
+	"github.com/liyown/MailRelay/internal/catalog"
+	"github.com/liyown/MailRelay/internal/command"
+	"github.com/liyown/MailRelay/internal/config"
+	"github.com/liyown/MailRelay/internal/handler"
+	"github.com/liyown/MailRelay/internal/mailbox"
+	"github.com/liyown/MailRelay/internal/router"
+	"github.com/liyown/MailRelay/internal/security"
+	"github.com/liyown/MailRelay/internal/store"
 )
 
 type Runtime struct {

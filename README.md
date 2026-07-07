@@ -11,7 +11,7 @@ It is a single-machine Go service. SQLite stores deduplication keys, execution a
 ## Five-minute setup
 
 ```bash
-go install github.com/becomeopc/opc-mailrelay/cmd/mailrelay@latest
+go install github.com/liyown/MailRelay/cmd/mailrelay@latest
 mailrelay init
 ```
 

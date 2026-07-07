@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/becomeopc/opc-mailrelay/internal/command"
+	"github.com/liyown/MailRelay/internal/command"
 	"io"
 	"os"
 	"os/exec"

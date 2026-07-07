@@ -3,8 +3,8 @@ package handler
 import (
 	"context"
 	"fmt"
-	"github.com/becomeopc/opc-mailrelay/internal/command"
-	"github.com/becomeopc/opc-mailrelay/internal/store"
+	"github.com/liyown/MailRelay/internal/command"
+	"github.com/liyown/MailRelay/internal/store"
 	"time"
 )
 

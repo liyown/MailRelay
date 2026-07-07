@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"github.com/becomeopc/opc-mailrelay/internal/cli"
+	"github.com/liyown/MailRelay/internal/cli"
 	"os"
 	"os/signal"
 	"syscall"

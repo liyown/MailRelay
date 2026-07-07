@@ -2,7 +2,7 @@ package handler
 
 import (
 	"context"
-	"github.com/becomeopc/opc-mailrelay/internal/command"
+	"github.com/liyown/MailRelay/internal/command"
 	"io"
 	"net/http"
 	"strings"

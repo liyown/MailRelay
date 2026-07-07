@@ -3,7 +3,7 @@ package handler
 import (
 	"context"
 	"fmt"
-	"github.com/becomeopc/opc-mailrelay/internal/command"
+	"github.com/liyown/MailRelay/internal/command"
 )
 
 type Workflow struct{ maxSteps, maxDepth int }

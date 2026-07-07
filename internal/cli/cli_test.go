@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/becomeopc/opc-mailrelay/internal/config"
-	"github.com/becomeopc/opc-mailrelay/internal/store"
+	"github.com/liyown/MailRelay/internal/config"
+	"github.com/liyown/MailRelay/internal/store"
 )
 
 func TestInitHelpDoctorStatus(t *testing.T) {

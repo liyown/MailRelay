@@ -2,8 +2,8 @@ package handler
 
 import (
 	"context"
-	"github.com/becomeopc/opc-mailrelay/internal/command"
-	"github.com/becomeopc/opc-mailrelay/internal/store"
+	"github.com/liyown/MailRelay/internal/command"
+	"github.com/liyown/MailRelay/internal/store"
 	"path/filepath"
 	"testing"
 	"time"

@@ -2,7 +2,7 @@
 
 ## 1. Scope
 
-MailRelay is a single-host, email-driven command runtime distributed as the `mailrelay` CLI from module `github.com/becomeopc/opc-mailrelay`. It converts authenticated email into declarative commands, dispatches those commands through a handler registry, records execution in SQLite, and replies through SMTP.
+MailRelay is a single-host, email-driven command runtime distributed as the `mailrelay` CLI from module `github.com/liyown/MailRelay`. It converts authenticated email into declarative commands, dispatches those commands through a handler registry, records execution in SQLite, and replies through SMTP.
 
 The product includes IMAP polling and IDLE, SMTP replies, configuration hot reload, HTTP, webhook, workflow, plugin, restricted shell, AI agent, MCP, SQLite queue, and build-time custom handlers. It intentionally excludes a Web UI, multi-instance synchronization, OAuth, and provider-specific Gmail APIs.
 

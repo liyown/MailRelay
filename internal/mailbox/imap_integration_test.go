@@ -5,7 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"github.com/becomeopc/opc-mailrelay/internal/config"
+	"github.com/liyown/MailRelay/internal/config"
 	"strings"
 	"sync"
 	"testing"

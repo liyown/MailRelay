@@ -2,8 +2,8 @@ package router
 
 import (
 	"context"
-	"github.com/becomeopc/opc-mailrelay/internal/command"
-	"github.com/becomeopc/opc-mailrelay/internal/handler"
+	"github.com/liyown/MailRelay/internal/command"
+	"github.com/liyown/MailRelay/internal/handler"
 	"strings"
 	"testing"
 	"time"

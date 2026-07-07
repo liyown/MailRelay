@@ -14,12 +14,12 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/becomeopc/opc-mailrelay/internal/app"
-	"github.com/becomeopc/opc-mailrelay/internal/command"
-	"github.com/becomeopc/opc-mailrelay/internal/config"
-	"github.com/becomeopc/opc-mailrelay/internal/security"
-	"github.com/becomeopc/opc-mailrelay/internal/store"
-	"github.com/becomeopc/opc-mailrelay/internal/version"
+	"github.com/liyown/MailRelay/internal/app"
+	"github.com/liyown/MailRelay/internal/command"
+	"github.com/liyown/MailRelay/internal/config"
+	"github.com/liyown/MailRelay/internal/security"
+	"github.com/liyown/MailRelay/internal/store"
+	"github.com/liyown/MailRelay/internal/version"
 )
 
 const usage = `MailRelay - email-driven command runtime

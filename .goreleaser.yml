@@ -20,9 +20,9 @@ builds:
         goarch: arm64
     ldflags:
       - -s -w
-      - -X github.com/becomeopc/opc-mailrelay/internal/version.Version={{.Version}}
-      - -X github.com/becomeopc/opc-mailrelay/internal/version.Commit={{.Commit}}
-      - -X github.com/becomeopc/opc-mailrelay/internal/version.BuildTime={{.Date}}
+      - -X github.com/liyown/MailRelay/internal/version.Version={{.Version}}
+      - -X github.com/liyown/MailRelay/internal/version.Commit={{.Commit}}
+      - -X github.com/liyown/MailRelay/internal/version.BuildTime={{.Date}}
 
 archives:
   - id: default

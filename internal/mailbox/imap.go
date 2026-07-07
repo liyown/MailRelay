@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"github.com/becomeopc/opc-mailrelay/internal/config"
+	"github.com/liyown/MailRelay/internal/config"
 	"github.com/emersion/go-imap"
 	idle "github.com/emersion/go-imap-idle"
 	"github.com/emersion/go-imap/client"
