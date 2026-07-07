@@ -40,6 +40,11 @@ type Context struct {
 type Executor interface {
 	Execute(context.Context, Request) (Result, error)
 }
+
+type Catalog interface {
+	Command(string) (Command, bool)
+}
+
 type Result struct {
 	Status, Summary, Body string
 	Data                  map[string]any

@@ -25,6 +25,19 @@ func (f *rawFailingExec) Execute(context.Context, command.Request) (command.Resu
 	return command.Result{}, fmt.Errorf("webhook 500 for vip@example.com token=topsecret")
 }
 
+type catalogExec struct {
+	commands map[string]command.Command
+}
+
+func (e catalogExec) Execute(context.Context, command.Request) (command.Result, error) {
+	return command.Result{Status: "success", Summary: "ok"}, nil
+}
+
+func (e catalogExec) Command(name string) (command.Command, bool) {
+	c, ok := e.commands[name]
+	return c, ok
+}
+
 func TestQueueAndWorker(t *testing.T) {
 	s, err := store.Open(filepath.Join(t.TempDir(), "q.db"))
 	if err != nil {
@@ -80,6 +93,64 @@ func TestQueueRedactsSensitiveParamsButWorkerReceivesRedactedCopy(t *testing.T) 
 	}
 	if strings.Contains(raw, "raw-secret") {
 		t.Fatalf("raw secret leaked into queue params: %s", raw)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["secret"] != "[REDACTED]" || got["env"] != "prod" {
+		t.Fatalf("unexpected queue params: %s", raw)
+	}
+}
+
+func TestQueueRedactsParamsUsingTargetCommandMetadata(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "q-target-redact.db")
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	h := NewQueue(s)
+	wrapper := command.Command{
+		Name:       "later",
+		Handler:    "queue",
+		Config:     map[string]any{"command": "deploy"},
+		Parameters: map[string]command.Parameter{"env": {Type: "string"}, "secret": {Type: "string"}},
+	}
+	target := command.Command{
+		Name:    "deploy",
+		Handler: "capture",
+		Parameters: map[string]command.Parameter{
+			"env":    {Type: "string"},
+			"secret": {Type: "string", Sensitive: true},
+		},
+	}
+
+	_, err = h.Execute(context.Background(), command.Context{
+		Command: wrapper,
+		Request: command.Request{
+			MessageID: "m-target-redact",
+			Name:      "later",
+			Params:    map[string]any{"env": "prod", "secret": "target-secret"},
+		},
+		Execute: catalogExec{commands: map[string]command.Command{"deploy": target}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var raw string
+	if err := db.QueryRow(`SELECT params_json FROM queue_jobs WHERE idempotency_key='m-target-redact:later'`).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(raw, "target-secret") {
+		t.Fatalf("raw target secret leaked into queue params: %s", raw)
 	}
 	var got map[string]any
 	if err := json.Unmarshal([]byte(raw), &got); err != nil {

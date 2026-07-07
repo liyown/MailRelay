@@ -44,7 +44,13 @@ func (q *Queue) Execute(ctx context.Context, x command.Context) (command.Result,
 	}
 	max := intValue(x.Command.Config["max_attempts"], q.defaultMaxAttempts)
 	key := x.Request.MessageID + ":" + x.Command.Name
-	id, err := q.store.Enqueue(ctx, target, security.Redact(x.Command, x.Request.Params), key, max, time.Now())
+	redactFrom := x.Command
+	if catalog, ok := x.Execute.(command.Catalog); ok {
+		if targetCommand, found := catalog.Command(target); found {
+			redactFrom = targetCommand
+		}
+	}
+	id, err := q.store.Enqueue(ctx, target, security.Redact(redactFrom, x.Request.Params), key, max, time.Now())
 	if err != nil {
 		return command.Result{}, err
 	}
