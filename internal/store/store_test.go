@@ -22,22 +22,29 @@ func TestReplyOutboxLeaseRetryAndDeadLetter(t *testing.T) {
 	if err != nil || r == nil || r.ID != id {
 		t.Fatalf("%#v %v", r, err)
 	}
-	if err = s.FailReply(ctx, r, "smtp down", 0); err != nil {
+	if err = s.FailReply(ctx, r, "550 rcpt <me@example.com> rejected", 0); err != nil {
 		t.Fatal(err)
 	}
 	r, err = s.ClaimReply(ctx, time.Now().Add(time.Second), time.Minute)
 	if err != nil || r == nil {
 		t.Fatalf("%#v %v", r, err)
 	}
-	if err = s.FailReply(ctx, r, "still down", 0); err != nil {
+	if err = s.FailReply(ctx, r, "535 auth token=secret still down", 0); err != nil {
 		t.Fatal(err)
 	}
 	state, err := s.MessageState(ctx, "m1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state.State != MessageDead || state.ErrorKind != "reply_delivery" || state.ErrorSummary != "still down" {
+	if state.State != MessageDead || state.ErrorKind != "reply_delivery" || state.ErrorSummary != "delivery failed" {
 		t.Fatalf("unexpected message state after dead reply: %#v", state)
+	}
+	failure, err := s.LatestFailure(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failure != "reply: delivery failed" {
+		t.Fatalf("unexpected latest failure: %q", failure)
 	}
 	pending, dead, err := s.ReplyCounts(ctx)
 	if err != nil || pending != 0 || dead != 1 {

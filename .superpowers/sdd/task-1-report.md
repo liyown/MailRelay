@@ -102,3 +102,31 @@ Results:
 - All malformed-message regression tests passed.
 - Required `internal/app` focused tests passed.
 - `go test ./internal/app ./internal/mail -count=1` passed.
+
+## 2026-07-07 Final Review Fix: Redact Reply Failure Persistence
+
+Scope:
+- `internal/store/store.go`
+- `internal/store/store_test.go`
+- `internal/app/app_test.go`
+
+Fixes applied:
+- Redacted persisted reply delivery failures at the store boundary so `outbox_replies.last_error` and terminal `processed_messages.error_summary` store `delivery failed` instead of raw SMTP/provider text.
+- Kept operator-useful classification via existing `reply_delivery` error kind without retaining recipient, server, or token content.
+
+TDD evidence:
+1. Added `TestRunOneReplyRedactsStoredSMTPFailure` in `internal/app/app_test.go`.
+2. RED:
+   - `go test ./internal/app -run TestRunOneReplyRedactsStoredSMTPFailure -count=1 -v` failed because `processed_messages.error_summary` stored `550 rcpt <vip@example.com> rejected; sasl token=topsecret`.
+3. GREEN:
+   - Updated reply failure persistence to redact stored failure text to `delivery failed`.
+   - Updated `TestReplyOutboxLeaseRetryAndDeadLetter` to assert sanitized dead-letter persistence.
+
+Verification:
+- `go test ./internal/app -run 'TestRunOneReplyRedactsStoredSMTPFailure|TestReplyRetryDoesNotExecuteHandlerTwice' -count=1 -v`
+- `go test ./internal/store -run 'TestReplyOutboxLeaseRetryAndDeadLetter|TestMessageFailureUpdatePreservesExistingSenderAndCommand' -count=1 -v`
+- `go test ./internal/store ./internal/app -count=1`
+
+Results:
+- Focused reply failure redaction tests passed.
+- `go test ./internal/store ./internal/app -count=1` passed.

@@ -13,6 +13,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 )
 
 type testHandler struct{ calls int }
@@ -27,6 +28,7 @@ type testSender struct {
 	n    int
 	body []byte
 	fail int
+	err  error
 }
 
 type batchReceiver struct {
@@ -44,6 +46,9 @@ func (r *batchReceiver) Idle(context.Context) error { return nil }
 func (s *testSender) Send(_ context.Context, _ string, b []byte) error {
 	s.n++
 	s.body = b
+	if s.err != nil {
+		return s.err
+	}
 	if s.fail > 0 {
 		s.fail--
 		return fmt.Errorf("smtp unavailable")
@@ -239,6 +244,55 @@ func TestReplyRetryDoesNotExecuteHandlerTwice(t *testing.T) {
 	}
 	if h.calls != 1 || sender.n != 2 {
 		t.Fatalf("handler=%d sends=%d", h.calls, sender.n)
+	}
+}
+
+func TestRunOneReplyRedactsStoredSMTPFailure(t *testing.T) {
+	st, err := store.Open(t.TempDir() + "/reply-redact.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	rawErr := "550 rcpt <vip@example.com> rejected; sasl token=topsecret"
+	sender := &testSender{err: errors.New(rawErr)}
+	a := New(st, nil, sender, "relay@example.com", nil, "")
+	a.replyBackoff = 0
+	if _, err := st.RecordExecutionAndReply(
+		context.Background(),
+		store.Execution{MessageID: "reply-redact-1", Command: "push", Handler: "test", Status: "success", StartedAt: time.Now()},
+		nil,
+		"vip@example.com",
+		[]byte("reply"),
+		1,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	worked, err := a.RunOneReply(context.Background())
+	if err != nil || !worked {
+		t.Fatalf("worked=%v err=%v", worked, err)
+	}
+
+	state, err := st.MessageState(context.Background(), "reply-redact-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.State != store.MessageDead || state.ErrorKind != "reply_delivery" || state.ErrorSummary != "delivery failed" {
+		t.Fatalf("unexpected message state: %#v", state)
+	}
+	if strings.Contains(state.ErrorSummary, "vip@example.com") || strings.Contains(state.ErrorSummary, "topsecret") {
+		t.Fatalf("raw SMTP data leaked into processed_messages: %#v", state)
+	}
+
+	failure, err := st.LatestFailure(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failure != "reply: delivery failed" {
+		t.Fatalf("unexpected latest failure: %q", failure)
+	}
+	if strings.Contains(failure, "vip@example.com") || strings.Contains(failure, "topsecret") {
+		t.Fatalf("raw SMTP data leaked into outbox failure: %q", failure)
 	}
 }
 

@@ -80,6 +80,10 @@ func boolInt(v bool) int {
 	return 0
 }
 
+func safeReplyFailureReason(string) string {
+	return "delivery failed"
+}
+
 func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, err
@@ -229,6 +233,7 @@ func (s *Store) CompleteReply(ctx context.Context, r *Reply) error {
 	return tx.Commit()
 }
 func (s *Store) FailReply(ctx context.Context, r *Reply, reason string, backoff time.Duration) error {
+	reason = safeReplyFailureReason(reason)
 	status := "pending"
 	if r.Attempts >= r.MaxAttempts {
 		status = "dead"
