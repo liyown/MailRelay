@@ -25,6 +25,15 @@ func (f *rawFailingExec) Execute(context.Context, command.Request) (command.Resu
 	return command.Result{}, fmt.Errorf("webhook 500 for vip@example.com token=topsecret")
 }
 
+type typedFailingExec struct {
+	kind    string
+	message string
+}
+
+func (f typedFailingExec) Execute(context.Context, command.Request) (command.Result, error) {
+	return command.Result{}, &command.Error{Kind: f.kind, Message: f.message}
+}
+
 type catalogExec struct {
 	commands map[string]command.Command
 }
@@ -330,5 +339,91 @@ func TestRunOneJobStoresSafeFailureSummary(t *testing.T) {
 	}
 	if strings.Contains(result, "vip@example.com") || strings.Contains(result, "token=topsecret") {
 		t.Fatalf("raw worker error leaked into queue result: %q", result)
+	}
+}
+
+func TestQueueTerminalFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "q-terminal.db")
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.Enqueue(context.Background(), "missing", nil, "terminal", 5, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	worked, err := RunOneJobWithPolicy(context.Background(), s, typedFailingExec{kind: "unknown_command", message: "token=topsecret"}, time.Minute, time.Second, time.Minute)
+	if err != nil || !worked {
+		t.Fatalf("worked=%v err=%v", worked, err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var status, result string
+	var attempts int
+	if err := db.QueryRow(`SELECT status,result,attempts FROM queue_jobs WHERE idempotency_key='terminal'`).Scan(&status, &result, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if status != "dead" || result != "unknown_command" || attempts != 1 {
+		t.Fatalf("status=%q result=%q attempts=%d", status, result, attempts)
+	}
+}
+
+func TestQueueRetryableFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "q-retryable.db")
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.Enqueue(context.Background(), "deploy", nil, "retryable", 5, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	worked, err := RunOneJobWithPolicy(context.Background(), s, typedFailingExec{kind: "dependency", message: "upstream unavailable"}, time.Minute, time.Second, time.Minute)
+	if err != nil || !worked {
+		t.Fatalf("worked=%v err=%v", worked, err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var status, result string
+	if err := db.QueryRow(`SELECT status,result FROM queue_jobs WHERE idempotency_key='retryable'`).Scan(&status, &result); err != nil {
+		t.Fatal(err)
+	}
+	if status != "pending" || result != "dependency" {
+		t.Fatalf("status=%q result=%q", status, result)
+	}
+}
+
+func TestQueueFailureEventIsSafe(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "q-event.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.Enqueue(context.Background(), "deploy", nil, "event", 2, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	worked, err := RunOneJobWithPolicy(context.Background(), s, typedFailingExec{kind: "dependency", message: "vip@example.com token=topsecret"}, time.Minute, time.Second, time.Minute)
+	if err != nil || !worked {
+		t.Fatalf("worked=%v err=%v", worked, err)
+	}
+	events, err := s.RecentEvents(context.Background(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events=%#v", events)
+	}
+	event := events[0]
+	if event.Phase != "queue" || event.Handler != "queue" || event.ErrorKind != "dependency" || event.Summary != "queue job failed" {
+		t.Fatalf("event=%#v", event)
+	}
+	if strings.Contains(event.Summary, "vip@example.com") || strings.Contains(event.Summary, "topsecret") {
+		t.Fatalf("unsafe event=%#v", event)
 	}
 }

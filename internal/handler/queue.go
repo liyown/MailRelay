@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/becomeopc/opc-mailrelay/internal/command"
 	"github.com/becomeopc/opc-mailrelay/internal/security"
@@ -66,12 +67,45 @@ func RunOneJobWithPolicy(ctx context.Context, s *store.Store, e command.Executor
 	}
 	res, err := e.Execute(ctx, command.Request{MessageID: fmt.Sprintf("queue:%d", j.ID), Name: j.Command, Params: j.Params, Received: time.Now()})
 	if err != nil {
-		if e2 := s.FailJob(ctx, j, err.Error(), retryBackoff(initialBackoff, maxBackoff, j.Attempts)); e2 != nil {
-			return true, e2
+		kind := queueFailureKind(err)
+		var persistErr error
+		if terminalQueueFailure(kind) {
+			persistErr = s.RejectJob(ctx, j, kind)
+		} else {
+			persistErr = s.FailJob(ctx, j, err.Error(), retryBackoff(initialBackoff, maxBackoff, j.Attempts))
+		}
+		if persistErr != nil {
+			return true, persistErr
+		}
+		if eventErr := s.AddEvent(ctx, store.RuntimeEvent{
+			Severity:  "error",
+			Phase:     "queue",
+			MessageID: fmt.Sprintf("queue:%d", j.ID),
+			Command:   j.Command,
+			Handler:   "queue",
+			ErrorKind: kind,
+			Summary:   "queue job failed",
+		}); eventErr != nil {
+			return true, eventErr
 		}
 		return true, nil
 	}
 	return true, s.CompleteJob(ctx, j.ID, res.Summary)
+}
+func queueFailureKind(err error) string {
+	var commandErr *command.Error
+	if errors.As(err, &commandErr) && commandErr.Kind != "" {
+		return commandErr.Kind
+	}
+	return "dependency"
+}
+func terminalQueueFailure(kind string) bool {
+	switch kind {
+	case "unknown_command", "invalid_parameters", "policy":
+		return true
+	default:
+		return false
+	}
 }
 func retryBackoff(initial, max time.Duration, attempt int) time.Duration {
 	if initial <= 0 {

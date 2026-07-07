@@ -377,6 +377,32 @@ func TestLatestFailureDoesNotSurfaceRawQueueError(t *testing.T) {
 	}
 }
 
+func TestRejectJobMovesRunningJobDirectlyToDead(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "reject-job.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.Enqueue(context.Background(), "missing", map[string]any{"env": "prod"}, "reject-1", 5, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	job, err := s.ClaimJob(context.Background(), time.Now(), time.Minute)
+	if err != nil || job == nil {
+		t.Fatalf("job=%#v err=%v", job, err)
+	}
+	if err := s.RejectJob(context.Background(), job, "unknown_command"); err != nil {
+		t.Fatal(err)
+	}
+	var status, result string
+	var lease sql.NullString
+	if err := s.db.QueryRow(`SELECT status,result,lease_until FROM queue_jobs WHERE id=?`, job.ID).Scan(&status, &result, &lease); err != nil {
+		t.Fatal(err)
+	}
+	if status != "dead" || result != "unknown_command" || lease.Valid {
+		t.Fatalf("status=%q result=%q lease=%v", status, result, lease)
+	}
+}
+
 func TestReplayReplyRestoresMessageReplyPending(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "reply-replay-state.db"))
 	if err != nil {

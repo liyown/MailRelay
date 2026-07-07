@@ -588,6 +588,25 @@ func (s *Store) FailJob(ctx context.Context, j *Job, reason string, backoff time
 	_, err := s.db.ExecContext(ctx, `UPDATE queue_jobs SET status=?,result=?,available_at=?,lease_until=NULL WHERE id=?`, status, reason, dbTime(time.Now().Add(backoff)), j.ID)
 	return err
 }
+func (s *Store) RejectJob(ctx context.Context, j *Job, kind string) error {
+	switch kind {
+	case "unknown_command", "invalid_parameters", "policy":
+	default:
+		kind = "policy"
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE queue_jobs SET status='dead',result=?,lease_until=NULL WHERE id=? AND status='running'`, kind, j.ID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return fmt.Errorf("running queue job %d not found", j.ID)
+	}
+	return nil
+}
 func (s *Store) DeadCounts(ctx context.Context) (queueDead, replyDead int, err error) {
 	err = s.db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM queue_jobs WHERE status='dead'),(SELECT count(*) FROM outbox_replies WHERE status='dead')`).Scan(&queueDead, &replyDead)
 	return
