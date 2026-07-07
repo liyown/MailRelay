@@ -72,3 +72,33 @@ Verification:
 Results:
 - All focused fix tests passed.
 - Full `internal/store` and `internal/app` package tests passed.
+
+## 2026-07-07 Re-review Fix: Malformed Parse Classification
+
+Scope:
+- `internal/mail/parser.go`
+- `internal/app/app_test.go`
+
+Fixes applied:
+- Wrapped all malformed-message parser exits used by `Process` in `*command.Error{Kind: "parse"}` so batch classification records them as `parse_failed` instead of generic `dead`.
+- Covered the remaining malformed-message cases called out in re-review: empty subject, invalid JSON body, and invalid body line.
+
+TDD evidence:
+1. Added `TestOnceRecordsMalformedMessagesAsParseFailed` in `internal/app/app_test.go` with subcases for:
+   - `empty subject`
+   - `invalid JSON body`
+   - `invalid body line`
+2. RED:
+   - `go test ./internal/app -run TestOnceRecordsMalformedMessagesAsParseFailed -count=1 -v` failed for all three cases because `Once` persisted `uid:<n>` rows as `dead` with `ErrorKind:"message"` and `ErrorSummary:"internal"`.
+3. GREEN:
+   - Updated `internal/mail/parser.go` so malformed parser outcomes consistently return `Kind:"parse"`.
+   - Re-ran the new focused app test successfully.
+
+Verification:
+- `go test ./internal/app -run 'TestOnceRecordsMalformedMessagesAsParseFailed|TestOnceRecordsBadMessageAndContinuesBatch|TestOnceAuthFailureUsesMessageIDWithoutDeadUIDDuplicate|TestProcessAuthenticatesAndDeduplicates|TestReplyRetryDoesNotExecuteHandlerTwice' -count=1 -v`
+- `go test ./internal/app ./internal/mail -count=1`
+
+Results:
+- All malformed-message regression tests passed.
+- Required `internal/app` focused tests passed.
+- `go test ./internal/app ./internal/mail -count=1` passed.

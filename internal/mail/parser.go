@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -26,22 +25,26 @@ type Message struct {
 	Attachments []Attachment
 }
 
+func parseErr(message string, err error) error {
+	return &command.Error{Kind: "parse", Message: message, Err: err}
+}
+
 func Parse(r io.Reader) (Message, error) {
 	m, err := mailstd.ReadMessage(r)
 	if err != nil {
-		return Message{}, &command.Error{Kind: "parse", Message: "invalid message", Err: err}
+		return Message{}, parseErr("invalid message", err)
 	}
 	addr, err := mailstd.ParseAddress(m.Header.Get("From"))
 	if err != nil {
-		return Message{}, &command.Error{Kind: "parse", Message: "invalid From", Err: err}
+		return Message{}, parseErr("invalid From", err)
 	}
 	subj, err := new(mime.WordDecoder).DecodeHeader(m.Header.Get("Subject"))
 	if err != nil {
-		return Message{}, err
+		return Message{}, parseErr("invalid Subject", err)
 	}
 	fields := strings.Fields(strings.TrimSpace(subj))
 	if len(fields) == 0 {
-		return Message{}, fmt.Errorf("empty subject")
+		return Message{}, parseErr("empty subject", nil)
 	}
 	name := strings.ToLower(fields[0])
 	params := map[string]any{}
@@ -50,12 +53,12 @@ func Parse(r io.Reader) (Message, error) {
 	}
 	body, atts, ctype, err := readBody(m)
 	if err != nil {
-		return Message{}, err
+		return Message{}, parseErr("invalid body", err)
 	}
 	if strings.Contains(ctype, "application/json") {
 		var x map[string]any
 		if err = json.Unmarshal(body, &x); err != nil {
-			return Message{}, fmt.Errorf("invalid JSON body: %w", err)
+			return Message{}, parseErr("invalid JSON body", err)
 		}
 		for k, v := range x {
 			params[k] = v
@@ -69,12 +72,12 @@ func Parse(r io.Reader) (Message, error) {
 			}
 			k, v, ok := strings.Cut(line, "=")
 			if !ok {
-				return Message{}, fmt.Errorf("invalid body line")
+				return Message{}, parseErr("invalid body line", nil)
 			}
 			params[strings.TrimSpace(k)] = strings.TrimSpace(v)
 		}
 		if err = s.Err(); err != nil {
-			return Message{}, err
+			return Message{}, parseErr("invalid body", err)
 		}
 	}
 	token, _ := params["_token"].(string)

@@ -110,6 +110,67 @@ func TestOnceRecordsBadMessageAndContinuesBatch(t *testing.T) {
 	}
 }
 
+func TestOnceRecordsMalformedMessagesAsParseFailed(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		uid  uint32
+	}{
+		{
+			name: "empty subject",
+			uid:  11,
+			body: "From: me@example.com\r\nSubject:   \r\nMessage-ID: <bad-empty-subject>\r\nX-MailRelay-Token: secret\r\n\r\n",
+		},
+		{
+			name: "invalid JSON body",
+			uid:  12,
+			body: "From: me@example.com\r\nSubject: push\r\nMessage-ID: <bad-json>\r\nX-MailRelay-Token: secret\r\nContent-Type: application/json\r\n\r\n{\"oops\":",
+		},
+		{
+			name: "invalid body line",
+			uid:  13,
+			body: "From: me@example.com\r\nSubject: push\r\nMessage-ID: <bad-body-line>\r\nX-MailRelay-Token: secret\r\n\r\nnot-an-assignment",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st, err := store.Open(t.TempDir() + "/malformed.db")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+			h := &testHandler{}
+			reg := handler.NewRegistry()
+			_ = reg.Register(h)
+			route, _ := router.New([]command.Command{{Name: "push", Handler: "test"}}, reg)
+			sender := &testSender{}
+			a := New(st, route, sender, "relay@example.com", []string{"me@example.com"}, "secret")
+			recv := &batchReceiver{msgs: []mailbox.RawMessage{
+				{UID: tt.uid, Body: []byte(tt.body)},
+				{UID: 99, Body: []byte("From: me@example.com\r\nSubject: push\r\nMessage-ID: <good-after-bad>\r\nX-MailRelay-Token: secret\r\n\r\n")},
+			}}
+
+			if err := a.Once(context.Background(), recv, 100); err != nil {
+				t.Fatal(err)
+			}
+			got, err := st.MessageState(context.Background(), fmt.Sprintf("uid:%d", tt.uid))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.State != store.MessageParseFailed || got.ErrorKind != "parse" {
+				t.Fatalf("unexpected malformed message state: %#v", got)
+			}
+			if h.calls != 1 || sender.n != 1 {
+				t.Fatalf("handler calls=%d sends=%d", h.calls, sender.n)
+			}
+			if len(recv.seen) != 2 || recv.seen[0] != tt.uid || recv.seen[1] != 99 {
+				t.Fatalf("seen=%v", recv.seen)
+			}
+		})
+	}
+}
+
 func TestOnceAuthFailureUsesMessageIDWithoutDeadUIDDuplicate(t *testing.T) {
 	st, err := store.Open(t.TempDir() + "/auth.db")
 	if err != nil {
