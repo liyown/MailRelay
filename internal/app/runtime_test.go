@@ -6,12 +6,23 @@ import (
 	"github.com/becomeopc/opc-mailrelay/internal/command"
 	"github.com/becomeopc/opc-mailrelay/internal/handler"
 	"github.com/becomeopc/opc-mailrelay/internal/mailbox"
+	"github.com/becomeopc/opc-mailrelay/internal/store"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+type workflowLifecycleExec struct{ names []string }
+
+func (e *workflowLifecycleExec) Execute(_ context.Context, req command.Request) (command.Result, error) {
+	e.names = append(e.names, req.Name)
+	if req.Name == "deploy" {
+		return command.Result{}, &command.Error{Kind: "dependency", Message: "target unavailable"}
+	}
+	return command.Result{Status: "success", Summary: "ok"}, nil
+}
 
 type runCancelReceiver struct{ cancel context.CancelFunc }
 
@@ -283,5 +294,88 @@ commands:
 	}
 	if strings.Contains(res.Body, "new") || !strings.Contains(res.Body, "old") {
 		t.Fatalf("reload should be disabled, body=%q", res.Body)
+	}
+}
+
+func TestQueueRestartIdempotencyLifecycle(t *testing.T) {
+	d := t.TempDir()
+	path := filepath.Join(d, "mailrelay.yaml")
+	body := `mail:
+  imap: {address: "imap.example.com:993", username: u, password: p}
+  smtp: {address: "smtp.example.com:465", username: u, password: p, from: relay@example.com}
+security: {token: secret, allow: [me@example.com], http_hosts: [api.example.com]}
+storage: {path: relay.db}
+runtime: {queue_max_attempts: 3}
+commands:
+  - name: later
+    handler: queue
+    parameters:
+      env: {type: string, required: true}
+    config: {command: deploy}
+  - name: deploy
+    handler: http
+    parameters:
+      env: {type: string, required: true}
+    config: {url: "https://api.example.com/deploy"}
+`
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Build(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := command.Request{MessageID: "mail-queue", Name: "later", Params: map[string]any{"env": "prod"}}
+	first, err := r.app.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := r.app.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Data["job_id"] != second.Data["job_id"] {
+		t.Fatalf("job ids differ: first=%v second=%v", first.Data, second.Data)
+	}
+	depth, err := r.store.QueueDepth(context.Background())
+	if err != nil || depth != 1 {
+		t.Fatalf("depth=%d err=%v", depth, err)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := store.Open(filepath.Join(d, "relay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	job, err := reopened.ClaimJob(context.Background(), time.Now(), time.Minute)
+	if err != nil || job == nil {
+		t.Fatalf("job=%#v err=%v", job, err)
+	}
+	if job.Command != "deploy" || job.Params["env"] != "prod" || job.Attempts != 1 {
+		t.Fatalf("recovered job=%#v", job)
+	}
+}
+
+func TestWorkflowPartialFailureLifecycle(t *testing.T) {
+	exec := &workflowLifecycleExec{}
+	workflow := handler.NewWorkflow(10, 4)
+	_, err := workflow.Execute(context.Background(), command.Context{
+		Command: command.Command{Name: "release", Config: map[string]any{"steps": []any{
+			map[string]any{"command": "build"},
+			map[string]any{"command": "deploy"},
+			map[string]any{"command": "notify"},
+		}}},
+		Request: command.Request{MessageID: "mail-workflow"},
+		Execute: exec,
+	})
+	var commandErr *command.Error
+	if !errors.As(err, &commandErr) || commandErr.Kind != "workflow_step" || commandErr.Message != "step 2 (deploy) failed" {
+		t.Fatalf("error=%v", err)
+	}
+	if strings.Join(exec.names, ",") != "build,deploy" {
+		t.Fatalf("executed=%v", exec.names)
 	}
 }
