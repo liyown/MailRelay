@@ -19,6 +19,12 @@ func (f *failingExec) Execute(context.Context, command.Request) (command.Result,
 	return command.Result{}, fmt.Errorf("job failed")
 }
 
+type rawFailingExec struct{}
+
+func (f *rawFailingExec) Execute(context.Context, command.Request) (command.Result, error) {
+	return command.Result{}, fmt.Errorf("webhook 500 for vip@example.com token=topsecret")
+}
+
 func TestQueueAndWorker(t *testing.T) {
 	s, err := store.Open(filepath.Join(t.TempDir(), "q.db"))
 	if err != nil {
@@ -154,5 +160,43 @@ func TestQueueCommandMaxAttemptsOverridesRuntimeDefault(t *testing.T) {
 	}
 	if j.MaxAttempts != 2 {
 		t.Fatalf("max_attempts=%d, want command override 2", j.MaxAttempts)
+	}
+}
+
+func TestRunOneJobStoresSafeFailureSummary(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "q-safe-failure.db")
+	s, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	h := NewQueue(s)
+	_, err = h.Execute(context.Background(), command.Context{
+		Command: command.Command{Name: "later", Config: map[string]any{"command": "deploy", "max_attempts": 1}},
+		Request: command.Request{MessageID: "m-safe", Params: map[string]any{"env": "prod"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	worked, err := RunOneJob(context.Background(), s, &rawFailingExec{}, time.Second)
+	if err != nil || !worked {
+		t.Fatalf("worked=%v err=%v", worked, err)
+	}
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var result string
+	if err := db.QueryRow(`SELECT result FROM queue_jobs WHERE idempotency_key='m-safe:later'`).Scan(&result); err != nil {
+		t.Fatal(err)
+	}
+	if result != "dependency" {
+		t.Fatalf("queue result=%q, want sanitized dependency", result)
+	}
+	if strings.Contains(result, "vip@example.com") || strings.Contains(result, "token=topsecret") {
+		t.Fatalf("raw worker error leaked into queue result: %q", result)
 	}
 }

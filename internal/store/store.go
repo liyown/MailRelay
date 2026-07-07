@@ -114,6 +114,10 @@ func safeExpiredLeaseReason(kind string) string {
 	return safeReplyFailureReason("")
 }
 
+func safeQueueFailureReason(string) string {
+	return "dependency"
+}
+
 func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, err
@@ -337,7 +341,20 @@ func (s *Store) ReplyCounts(ctx context.Context) (pending, dead int, err error) 
 	return
 }
 func (s *Store) ReplayReply(ctx context.Context, id int64) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE outbox_replies SET status='pending',attempts=0,available_at=?,lease_until=NULL,last_error=NULL WHERE id=? AND status='dead'`, dbTime(time.Now()), id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var messageID string
+	err = tx.QueryRowContext(ctx, `SELECT message_id FROM outbox_replies WHERE id=? AND status='dead'`, id).Scan(&messageID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("dead reply %d not found", id)
+	}
+	if err != nil {
+		return err
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE outbox_replies SET status='pending',attempts=0,available_at=?,lease_until=NULL,last_error=NULL WHERE id=? AND status='dead'`, dbTime(time.Now()), id)
 	if err != nil {
 		return err
 	}
@@ -345,7 +362,10 @@ func (s *Store) ReplayReply(ctx context.Context, id int64) error {
 	if n != 1 {
 		return fmt.Errorf("dead reply %d not found", id)
 	}
-	return nil
+	if _, err = tx.ExecContext(ctx, `UPDATE processed_messages SET status=?,reply_pending=1,updated_at=? WHERE id=?`, MessageReplyPending, dbTime(time.Now()), messageID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *Store) ClaimMessage(ctx context.Context, id, sender string) (bool, error) {
 	r, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO processed_messages(id,sender,status,updated_at) VALUES(?,?,?,?)`, id, sender, MessageClaimed, dbTime(time.Now()))
@@ -560,6 +580,7 @@ func (s *Store) CompleteJob(ctx context.Context, id int64, result string) error 
 	return err
 }
 func (s *Store) FailJob(ctx context.Context, j *Job, reason string, backoff time.Duration) error {
+	reason = safeQueueFailureReason(reason)
 	status := "pending"
 	if j.Attempts >= j.MaxAttempts {
 		status = "dead"

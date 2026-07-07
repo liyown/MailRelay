@@ -336,7 +336,7 @@ func TestQueueDeadLetterReplayAndLatestFailure(t *testing.T) {
 		t.Fatalf("queue=%d reply=%d err=%v", qd, rd, err)
 	}
 	failure, err := s.LatestFailure(ctx)
-	if err != nil || failure != "queue: boom" {
+	if err != nil || failure != "queue: dependency" {
 		t.Fatalf("%q %v", failure, err)
 	}
 	if err = s.ReplayJob(ctx, id); err != nil {
@@ -345,6 +345,76 @@ func TestQueueDeadLetterReplayAndLatestFailure(t *testing.T) {
 	depth, err := s.QueueDepth(ctx)
 	if err != nil || depth != 1 {
 		t.Fatalf("depth=%d err=%v", depth, err)
+	}
+}
+
+func TestLatestFailureDoesNotSurfaceRawQueueError(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "safe-latest.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	if _, err := s.Enqueue(ctx, "deploy", nil, "safe-latest", 1, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	j, err := s.ClaimJob(ctx, time.Now(), time.Minute)
+	if err != nil || j == nil {
+		t.Fatalf("job=%#v err=%v", j, err)
+	}
+	if err = s.FailJob(ctx, j, "HTTP 500 for vip@example.com token=topsecret", 0); err != nil {
+		t.Fatal(err)
+	}
+	failure, err := s.LatestFailure(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failure != "queue: dependency" {
+		t.Fatalf("failure=%q, want sanitized queue failure", failure)
+	}
+	if strings.Contains(failure, "vip@example.com") || strings.Contains(failure, "token=topsecret") {
+		t.Fatalf("raw queue error surfaced in latest failure: %q", failure)
+	}
+}
+
+func TestReplayReplyRestoresMessageReplyPending(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "reply-replay-state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	id, err := s.RecordExecutionAndReply(ctx, Execution{MessageID: "m-replay", Command: "push", Handler: "http", Status: "success", StartedAt: time.Now()}, nil, "me@example.com", []byte("reply"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.ClaimReply(ctx, time.Now(), time.Minute)
+	if err != nil || r == nil {
+		t.Fatalf("reply=%#v err=%v", r, err)
+	}
+	if err = s.FailReply(ctx, r, "535 auth token=secret", 0); err != nil {
+		t.Fatal(err)
+	}
+	state, err := s.MessageState(ctx, "m-replay")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.State != MessageDead || state.ErrorKind != "reply_delivery" {
+		t.Fatalf("expected dead reply_delivery before replay, got %#v", state)
+	}
+
+	if err = s.ReplayReply(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	state, err = s.MessageState(ctx, "m-replay")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.State != MessageReplyPending {
+		t.Fatalf("state after reply replay=%q, want %q", state.State, MessageReplyPending)
+	}
+	if state.ErrorKind != "reply_delivery" || state.ErrorSummary != "delivery failed" {
+		t.Fatalf("replay should preserve failure history, got %#v", state)
 	}
 }
 
