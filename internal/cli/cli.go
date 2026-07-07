@@ -204,6 +204,8 @@ func status(path string, out io.Writer) error {
 		runtimeErr = "none"
 	} else if stateErr != nil {
 		return stateErr
+	} else if runtimeErr != "mail receiver failed" && runtimeErr != "configuration reload rejected" && runtimeErr != "reply delivery failed" && runtimeErr != "none" {
+		runtimeErr = "runtime failure"
 	}
 	fmt.Fprintf(out, "last_poll: %s\nruntime_error: %s\n", lastPoll, runtimeErr)
 	if failure, e := s.LatestFailure(ctx); e == nil {

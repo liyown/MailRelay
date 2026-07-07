@@ -2,7 +2,10 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -59,6 +62,46 @@ func TestReplyOutboxLeaseRetryAndDeadLetter(t *testing.T) {
 	}
 }
 
+func TestExpiredFinalAttemptReplyLeaseTransitionsToDead(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "expired-reply.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	id, err := s.RecordExecutionAndReply(ctx, Execution{MessageID: "m-expired", Command: "push", Handler: "http", Status: "success", StartedAt: time.Now()}, nil, "me@example.com", []byte("reply"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.ClaimReply(ctx, time.Now(), time.Nanosecond)
+	if err != nil || r == nil || r.ID != id {
+		t.Fatalf("claim=%#v err=%v", r, err)
+	}
+
+	r, err = s.ClaimReply(ctx, time.Now().Add(time.Millisecond), time.Nanosecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r != nil {
+		t.Fatalf("expired final attempt should not be re-claimed, got %#v", r)
+	}
+	pending, dead, err := s.ReplyCounts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending != 0 || dead != 1 {
+		t.Fatalf("pending=%d dead=%d", pending, dead)
+	}
+	state, err := s.MessageState(ctx, "m-expired")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.State != MessageDead || state.ErrorKind != "reply_delivery" || state.ErrorSummary != "delivery failed" {
+		t.Fatalf("unexpected message state: %#v", state)
+	}
+}
+
 func TestClaimsPersistAndQueue(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "relay.db")
 	s, err := Open(p)
@@ -87,6 +130,89 @@ func TestClaimsPersistAndQueue(t *testing.T) {
 	}
 	if err = s.CompleteJob(context.Background(), j.ID, "ok"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestExpiredFinalAttemptQueueLeaseTransitionsToDead(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "expired-job.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	base := time.Now().Add(-time.Millisecond)
+	id, err := s.Enqueue(ctx, "deploy", nil, "expired-job", 1, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, err := s.ClaimJob(ctx, time.Now(), time.Nanosecond)
+	if err != nil || j == nil || j.ID != id {
+		t.Fatalf("claim=%#v err=%v", j, err)
+	}
+
+	j, err = s.ClaimJob(ctx, time.Now().Add(time.Millisecond), time.Nanosecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j != nil {
+		t.Fatalf("expired final attempt should not be re-claimed, got %#v", j)
+	}
+	qd, rd, err := s.DeadCounts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if qd != 1 || rd != 0 {
+		t.Fatalf("queue_dead=%d reply_dead=%d", qd, rd)
+	}
+	failure, err := s.LatestFailure(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failure != "queue: lease expired after final attempt" {
+		t.Fatalf("unexpected latest failure: %q", failure)
+	}
+}
+
+func TestRedactedParamsPersistence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "redacted-params.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	redacted := map[string]any{"env": "prod", "token": "[REDACTED]"}
+	if _, err := s.RecordExecutionAndReply(ctx, Execution{MessageID: "m-redacted", Command: "deploy", Handler: "http", Status: "success", StartedAt: time.Now()}, redacted, "me@example.com", []byte("reply"), 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Enqueue(ctx, "deploy", redacted, "redacted-job", 1, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, query := range []string{
+		`SELECT params_json FROM executions WHERE message_id='m-redacted'`,
+		`SELECT params_json FROM queue_jobs WHERE idempotency_key='redacted-job'`,
+	} {
+		var raw string
+		if err := db.QueryRow(query).Scan(&raw); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(raw, "raw-secret") {
+			t.Fatalf("raw secret leaked: %s", raw)
+		}
+		var got map[string]any
+		if err := json.Unmarshal([]byte(raw), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got["token"] != "[REDACTED]" || got["env"] != "prod" {
+			t.Fatalf("unexpected redacted params: %s", raw)
+		}
 	}
 }
 
@@ -232,6 +358,9 @@ func TestRuntimeEventsAndHealthSummary(t *testing.T) {
 	if err := s.AddEvent(ctx, RuntimeEvent{Severity: "error", Phase: "reload", ErrorKind: "config", Summary: "invalid yaml"}); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.AddEvent(ctx, RuntimeEvent{Severity: "info", Phase: "receiver", Summary: "connected"}); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.MarkMessageExecuting(ctx, "stale-1", "me@example.com", "push"); err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +368,7 @@ func TestRuntimeEventsAndHealthSummary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 1 || events[0].Phase != "reload" || events[0].Summary != "invalid yaml" {
+	if len(events) != 2 || events[1].Phase != "reload" || events[1].Summary != "invalid yaml" {
 		t.Fatalf("events=%#v", events)
 	}
 	health, err := s.Health(ctx)
@@ -248,5 +377,8 @@ func TestRuntimeEventsAndHealthSummary(t *testing.T) {
 	}
 	if health.StaleExecuting != 1 || len(health.LatestFailures) != 1 {
 		t.Fatalf("health=%#v", health)
+	}
+	if health.LatestFailures[0].Severity != "error" || health.LatestFailures[0].Phase != "reload" {
+		t.Fatalf("health latest failures should include only error events: %#v", health.LatestFailures)
 	}
 }

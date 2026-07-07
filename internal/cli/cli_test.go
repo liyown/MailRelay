@@ -88,6 +88,43 @@ func TestStatusAndReplayDeadLetters(t *testing.T) {
 		t.Fatal(errout.String())
 	}
 }
+
+func TestStatusPrintsOnlySanitizedRuntimeError(t *testing.T) {
+	d := t.TempDir()
+	cfgPath := filepath.Join(d, "mailrelay.yaml")
+	var out, errout bytes.Buffer
+	if code := Run(context.Background(), []string{"--config", cfgPath, "init"}, &out, &errout); code != 0 {
+		t.Fatal(errout.String())
+	}
+	c, err := config.Load(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := store.Open(c.Storage.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawErr := "imap login failed for vip@example.com token=topsecret"
+	if err := s.SetState(context.Background(), "last_runtime_error", rawErr); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddEvent(context.Background(), store.RuntimeEvent{Severity: "error", Phase: "receiver", ErrorKind: "dependency", Summary: "mail receiver failed"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Close()
+	out.Reset()
+	errout.Reset()
+	if code := Run(context.Background(), []string{"--config", cfgPath, "status"}, &out, &errout); code != 0 {
+		t.Fatal(errout.String())
+	}
+	if strings.Contains(out.String(), "vip@example.com") || strings.Contains(out.String(), "topsecret") || strings.Contains(out.String(), rawErr) {
+		t.Fatalf("raw runtime error leaked into status:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "runtime_error: runtime failure") {
+		t.Fatalf("missing sanitized runtime error:\n%s", out.String())
+	}
+}
+
 func TestUsageError(t *testing.T) {
 	var out, errout bytes.Buffer
 	if code := Run(context.Background(), []string{"unknown"}, &out, &errout); code != 2 {

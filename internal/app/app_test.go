@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/becomeopc/opc-mailrelay/internal/command"
@@ -21,6 +22,30 @@ type testHandler struct{ calls int }
 func (h *testHandler) Name() string { return "test" }
 func (h *testHandler) Execute(context.Context, command.Context) (command.Result, error) {
 	h.calls++
+	return command.Result{Status: "success", Summary: "done", Body: "ok"}, nil
+}
+
+type paramsCaptureHandler struct {
+	calls int
+	got   map[string]any
+}
+
+func (h *paramsCaptureHandler) Name() string { return "capture" }
+func (h *paramsCaptureHandler) Execute(_ context.Context, x command.Context) (command.Result, error) {
+	h.calls++
+	h.got = x.Request.Params
+	return command.Result{Status: "success", Summary: "captured", Body: "ok"}, nil
+}
+
+type closeStoreHandler struct {
+	calls int
+	store *store.Store
+}
+
+func (h *closeStoreHandler) Name() string { return "closer" }
+func (h *closeStoreHandler) Execute(context.Context, command.Context) (command.Result, error) {
+	h.calls++
+	_ = h.store.Close()
 	return command.Result{Status: "success", Summary: "done", Body: "ok"}, nil
 }
 
@@ -69,7 +94,7 @@ func TestProcessAuthenticatesAndDeduplicates(t *testing.T) {
 	r, _ := router.New([]command.Command{{Name: "push", Description: "Push", Handler: "test", Parameters: map[string]command.Parameter{"message": {Type: "string", Required: true}}}}, reg)
 	sender := &testSender{}
 	a := New(st, r, sender, "relay@example.com", []string{"me@example.com"}, "secret")
-	a.replyBackoff = 0
+	a.SetRetryPolicy(5, 0, time.Minute)
 	raw := "From: me@example.com\r\nSubject: push\r\nMessage-ID: <m1>\r\nX-MailRelay-Token: secret\r\n\r\nmessage=hello\n"
 	for i := 0; i < 2; i++ {
 		if err = a.Process(context.Background(), io.NopCloser(strings.NewReader(raw))); err != nil {
@@ -211,6 +236,32 @@ func TestOnceAuthFailureUsesMessageIDWithoutDeadUIDDuplicate(t *testing.T) {
 	}
 }
 
+func TestOnceDoesNotMarkSeenWhenDurabilityFailsAfterHandler(t *testing.T) {
+	path := t.TempDir() + "/durability.db"
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := &closeStoreHandler{store: st}
+	reg := handler.NewRegistry()
+	_ = reg.Register(h)
+	route, _ := router.New([]command.Command{{Name: "push", Handler: "closer"}}, reg)
+	a := New(st, route, &testSender{}, "relay@example.com", []string{"me@example.com"}, "secret")
+	recv := &batchReceiver{msgs: []mailbox.RawMessage{
+		{UID: 42, Body: []byte("From: me@example.com\r\nSubject: push\r\nMessage-ID: <durability-fail>\r\nX-MailRelay-Token: secret\r\n\r\n")},
+	}}
+
+	if err := a.Once(context.Background(), recv, 100); err == nil {
+		t.Fatal("expected durability failure")
+	}
+	if h.calls != 1 {
+		t.Fatalf("expected handler to run once before durability failure, calls=%d", h.calls)
+	}
+	if len(recv.seen) != 0 {
+		t.Fatalf("durability failure must not mark message seen, seen=%v", recv.seen)
+	}
+}
+
 func TestReplyRetryDoesNotExecuteHandlerTwice(t *testing.T) {
 	path := t.TempDir() + "/retry.db"
 	st, err := store.Open(path)
@@ -223,7 +274,7 @@ func TestReplyRetryDoesNotExecuteHandlerTwice(t *testing.T) {
 	r, _ := router.New([]command.Command{{Name: "push", Handler: "test"}}, reg)
 	sender := &testSender{fail: 1}
 	a := New(st, r, sender, "relay@example.com", []string{"me@example.com"}, "secret")
-	a.replyBackoff = 0
+	a.SetRetryPolicy(5, time.Nanosecond, time.Nanosecond)
 	raw := "From: me@example.com\r\nSubject: push\r\nMessage-ID: <retry-1>\r\nX-MailRelay-Token: secret\r\n\r\n"
 	if err = a.Process(context.Background(), io.NopCloser(strings.NewReader(raw))); err != nil {
 		t.Fatal(err)
@@ -247,6 +298,101 @@ func TestReplyRetryDoesNotExecuteHandlerTwice(t *testing.T) {
 	}
 }
 
+func TestProcessRedactsSensitiveParamsInExecutionButHandlerSeesRaw(t *testing.T) {
+	path := t.TempDir() + "/redact-exec.db"
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	h := &paramsCaptureHandler{}
+	reg := handler.NewRegistry()
+	_ = reg.Register(h)
+	cmd := command.Command{
+		Name:    "deploy",
+		Handler: "capture",
+		Parameters: map[string]command.Parameter{
+			"env":    {Type: "string", Required: true},
+			"secret": {Type: "string", Required: true, Sensitive: true},
+		},
+	}
+	route, _ := router.New([]command.Command{cmd}, reg)
+	sender := &testSender{}
+	a := New(st, route, sender, "relay@example.com", []string{"me@example.com"}, "secret")
+	raw := "From: me@example.com\r\nSubject: deploy\r\nMessage-ID: <redact-exec>\r\nX-MailRelay-Token: secret\r\n\r\nenv=prod\nsecret=s3cr3t\n"
+
+	if err := a.Process(context.Background(), io.NopCloser(strings.NewReader(raw))); err != nil {
+		t.Fatal(err)
+	}
+	if h.got["secret"] != "s3cr3t" {
+		t.Fatalf("handler did not receive raw secret params: %#v", h.got)
+	}
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var rawParams string
+	if err := db.QueryRow(`SELECT params_json FROM executions WHERE message_id='redact-exec'`).Scan(&rawParams); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(rawParams), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["secret"] != "[REDACTED]" || got["env"] != "prod" {
+		t.Fatalf("unexpected persisted params: %s", rawParams)
+	}
+	if strings.Contains(rawParams, "s3cr3t") {
+		t.Fatalf("raw secret leaked into execution params: %s", rawParams)
+	}
+}
+
+func TestReplyFailureUsesConfiguredAttemptsAndBackoff(t *testing.T) {
+	path := t.TempDir() + "/reply-policy.db"
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	h := &testHandler{}
+	reg := handler.NewRegistry()
+	_ = reg.Register(h)
+	route, _ := router.New([]command.Command{{Name: "push", Handler: "test"}}, reg)
+	sender := &testSender{err: errors.New("smtp token=secret unavailable")}
+	a := New(st, route, sender, "relay@example.com", []string{"me@example.com"}, "secret")
+	a.SetRetryPolicy(2, 10*time.Second, 15*time.Second)
+	before := time.Now()
+	raw := "From: me@example.com\r\nSubject: push\r\nMessage-ID: <reply-policy>\r\nX-MailRelay-Token: secret\r\n\r\n"
+
+	if err := a.Process(context.Background(), io.NopCloser(strings.NewReader(raw))); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var maxAttempts int
+	var availableRaw string
+	if err := db.QueryRow(`SELECT max_attempts,available_at FROM outbox_replies WHERE message_id='reply-policy'`).Scan(&maxAttempts, &availableRaw); err != nil {
+		t.Fatal(err)
+	}
+	if maxAttempts != 2 {
+		t.Fatalf("reply max_attempts=%d, want 2", maxAttempts)
+	}
+	availableAt, err := time.Parse("2006-01-02T15:04:05.000000000Z07:00", availableRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delay := availableAt.Sub(before)
+	if delay < 9*time.Second || delay > 16*time.Second {
+		t.Fatalf("reply backoff delay=%s, want about 10s capped by policy", delay)
+	}
+}
+
 func TestRunOneReplyRedactsStoredSMTPFailure(t *testing.T) {
 	st, err := store.Open(t.TempDir() + "/reply-redact.db")
 	if err != nil {
@@ -256,7 +402,7 @@ func TestRunOneReplyRedactsStoredSMTPFailure(t *testing.T) {
 	rawErr := "550 rcpt <vip@example.com> rejected; sasl token=topsecret"
 	sender := &testSender{err: errors.New(rawErr)}
 	a := New(st, nil, sender, "relay@example.com", nil, "")
-	a.replyBackoff = 0
+	a.SetRetryPolicy(5, time.Nanosecond, time.Nanosecond)
 	if _, err := st.RecordExecutionAndReply(
 		context.Background(),
 		store.Execution{MessageID: "reply-redact-1", Command: "push", Handler: "test", Status: "success", StartedAt: time.Now()},

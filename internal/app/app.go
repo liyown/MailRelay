@@ -17,14 +17,16 @@ import (
 )
 
 type App struct {
-	mu           sync.RWMutex
-	store        *store.Store
-	router       *router.Router
-	sender       mailbox.Sender
-	from         string
-	allow        []string
-	token        string
-	replyBackoff time.Duration
+	mu               sync.RWMutex
+	store            *store.Store
+	router           *router.Router
+	sender           mailbox.Sender
+	from             string
+	allow            []string
+	token            string
+	replyMaxAttempts int
+	initialBackoff   time.Duration
+	maxBackoff       time.Duration
 }
 
 func runtimeEventSummary(phase string) string {
@@ -41,7 +43,23 @@ func runtimeEventSummary(phase string) string {
 }
 
 func New(s *store.Store, r *router.Router, sender mailbox.Sender, from string, allow []string, token string) *App {
-	return &App{store: s, router: r, sender: sender, from: from, allow: allow, token: token, replyBackoff: time.Minute}
+	return &App{store: s, router: r, sender: sender, from: from, allow: allow, token: token, replyMaxAttempts: 5, initialBackoff: time.Minute, maxBackoff: 30 * time.Minute}
+}
+func (a *App) SetRetryPolicy(replyMaxAttempts int, initialBackoff, maxBackoff time.Duration) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if replyMaxAttempts < 1 {
+		replyMaxAttempts = 1
+	}
+	if initialBackoff <= 0 {
+		initialBackoff = time.Minute
+	}
+	if maxBackoff <= 0 {
+		maxBackoff = initialBackoff
+	}
+	a.replyMaxAttempts = replyMaxAttempts
+	a.initialBackoff = initialBackoff
+	a.maxBackoff = maxBackoff
 }
 func (a *App) Process(ctx context.Context, raw io.ReadCloser) error {
 	defer raw.Close()
@@ -54,13 +72,15 @@ func (a *App) Process(ctx context.Context, raw io.ReadCloser) error {
 	token, from, sender, route := a.token, a.from, a.sender, a.router
 	a.mu.RUnlock()
 	if err = security.Authenticate(m.Request, m.Token, allow, token); err != nil {
-		_ = a.store.RecordMessageFailure(ctx, store.MessageUpdate{
+		if recordErr := a.store.RecordMessageFailure(ctx, store.MessageUpdate{
 			ID:           m.Request.MessageID,
 			Sender:       m.Request.Sender,
 			State:        store.MessageAuthFailed,
 			ErrorKind:    "authentication",
 			ErrorSummary: "authentication failed",
-		})
+		}); recordErr != nil {
+			return recordErr
+		}
 		return err
 	}
 	claimed, err := a.store.ClaimMessage(ctx, m.Request.MessageID, m.Request.Sender)
@@ -101,7 +121,14 @@ func (a *App) Process(ctx context.Context, raw io.ReadCloser) error {
 			Summary:   "handler failed",
 		})
 	}
-	id, err := a.store.RecordExecutionAndReply(ctx, store.Execution{MessageID: m.Request.MessageID, Command: m.Request.Name, Handler: handlerName, Status: status, Summary: res.Summary, Error: safeErr, StartedAt: started, Duration: time.Since(started)}, m.Request.Params, m.Request.Sender, reply, 5)
+	persistedParams := m.Request.Params
+	if c, ok := route.Command(m.Request.Name); ok {
+		persistedParams = security.Redact(c, m.Request.Params)
+	}
+	a.mu.RLock()
+	replyMaxAttempts := a.replyMaxAttempts
+	a.mu.RUnlock()
+	id, err := a.store.RecordExecutionAndReply(ctx, store.Execution{MessageID: m.Request.MessageID, Command: m.Request.Name, Handler: handlerName, Status: status, Summary: res.Summary, Error: safeErr, StartedAt: started, Duration: time.Since(started)}, persistedParams, m.Request.Sender, reply, replyMaxAttempts)
 	if err != nil {
 		return err
 	}
@@ -115,7 +142,7 @@ func (a *App) deliverReply(ctx context.Context, id int64, sender mailbox.Sender)
 	}
 	if err = sender.Send(ctx, r.Recipient, r.Payload); err != nil {
 		_ = a.store.AddEvent(ctx, store.RuntimeEvent{Severity: "error", Phase: "reply", MessageID: r.MessageID, ErrorKind: "dependency", Summary: runtimeEventSummary("reply")})
-		if e := a.store.FailReply(ctx, r, err.Error(), a.replyBackoff); e != nil {
+		if e := a.store.FailReply(ctx, r, err.Error(), a.retryBackoff(r.Attempts)); e != nil {
 			return true, e
 		}
 		return true, nil
@@ -132,7 +159,7 @@ func (a *App) RunOneReply(ctx context.Context) (bool, error) {
 	}
 	if err = sender.Send(ctx, r.Recipient, r.Payload); err != nil {
 		_ = a.store.AddEvent(ctx, store.RuntimeEvent{Severity: "error", Phase: "reply", MessageID: r.MessageID, ErrorKind: "dependency", Summary: runtimeEventSummary("reply")})
-		if e := a.store.FailReply(ctx, r, err.Error(), a.replyBackoff); e != nil {
+		if e := a.store.FailReply(ctx, r, err.Error(), a.retryBackoff(r.Attempts)); e != nil {
 			return true, e
 		}
 		return true, nil
@@ -147,11 +174,40 @@ func (a *App) ReplaceSecurity(from string, allow []string, token string) {
 	a.allow = append([]string(nil), allow...)
 	a.token = token
 }
+func (a *App) retryBackoff(attempt int) time.Duration {
+	a.mu.RLock()
+	initial, max := a.initialBackoff, a.maxBackoff
+	a.mu.RUnlock()
+	return retryBackoff(initial, max, attempt)
+}
 func (a *App) Execute(ctx context.Context, req command.Request) (command.Result, error) {
 	a.mu.RLock()
 	r := a.router
 	a.mu.RUnlock()
 	return r.Execute(ctx, req)
+}
+func retryBackoff(initial, max time.Duration, attempt int) time.Duration {
+	if initial <= 0 {
+		initial = time.Minute
+	}
+	if max <= 0 {
+		max = initial
+	}
+	if attempt < 1 {
+		attempt = 1
+	}
+	backoff := initial
+	for i := 1; i < attempt; i++ {
+		if backoff >= max/2 {
+			backoff = max
+			break
+		}
+		backoff *= 2
+	}
+	if backoff > max {
+		return max
+	}
+	return backoff
 }
 func classify(err error) string {
 	var e *command.Error
@@ -159,6 +215,19 @@ func classify(err error) string {
 		return e.Kind
 	}
 	return "internal"
+}
+
+func isMessageLevelError(err error) bool {
+	var e *command.Error
+	if !errors.As(err, &e) {
+		return false
+	}
+	switch e.Kind {
+	case "parse", "authentication", "unknown_command", "invalid_parameters", "policy":
+		return true
+	default:
+		return false
+	}
 }
 
 func messageFailureForUID(uid uint32, err error) (store.MessageUpdate, bool) {
@@ -191,8 +260,13 @@ func (a *App) Once(ctx context.Context, r mailbox.Receiver, limit int) error {
 	for _, m := range msgs {
 		err = a.Process(ctx, mailbox.RawReader(m))
 		if err != nil {
+			if !isMessageLevelError(err) {
+				return err
+			}
 			if update, ok := messageFailureForUID(m.UID, err); ok {
-				_ = a.store.RecordMessageFailure(ctx, update)
+				if recordErr := a.store.RecordMessageFailure(ctx, update); recordErr != nil {
+					return recordErr
+				}
 			}
 		}
 		if markErr := r.MarkSeen(ctx, m.UID); markErr != nil {

@@ -107,6 +107,13 @@ func safeReplyFailureReason(string) string {
 	return "delivery failed"
 }
 
+func safeExpiredLeaseReason(kind string) string {
+	if kind == "queue" {
+		return "lease expired after final attempt"
+	}
+	return safeReplyFailureReason("")
+}
+
 func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, err
@@ -212,6 +219,9 @@ func (s *Store) claimReply(ctx context.Context, id int64, now time.Time, lease t
 		return nil, err
 	}
 	defer tx.Rollback()
+	if err := s.expireFinalAttemptReplies(ctx, tx, now); err != nil {
+		return nil, err
+	}
 	var r Reply
 	var at string
 	query := `SELECT id,message_id,recipient,payload,attempts,max_attempts,available_at FROM outbox_replies WHERE (status='pending' OR (status='running' AND lease_until<?)) AND available_at<=? AND attempts<max_attempts`
@@ -223,6 +233,9 @@ func (s *Store) claimReply(ctx context.Context, id int64, now time.Time, lease t
 	query += ` ORDER BY id LIMIT 1`
 	err = tx.QueryRowContext(ctx, query, args...).Scan(&r.ID, &r.MessageID, &r.Recipient, &r.Payload, &r.Attempts, &r.MaxAttempts, &at)
 	if errors.Is(err, sql.ErrNoRows) {
+		if err = tx.Commit(); err != nil {
+			return nil, err
+		}
 		return nil, nil
 	}
 	if err != nil {
@@ -243,6 +256,43 @@ func (s *Store) claimReply(ctx context.Context, id int64, now time.Time, lease t
 	}
 	return &r, nil
 }
+
+func (s *Store) expireFinalAttemptReplies(ctx context.Context, tx *sql.Tx, now time.Time) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id,message_id FROM outbox_replies WHERE status='running' AND lease_until<? AND attempts>=max_attempts`, dbTime(now))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	type expiredReply struct {
+		id        int64
+		messageID string
+	}
+	var expired []expiredReply
+	for rows.Next() {
+		var r expiredReply
+		if err := rows.Scan(&r.id, &r.messageID); err != nil {
+			return err
+		}
+		expired = append(expired, r)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	reason := safeExpiredLeaseReason("reply")
+	for _, r := range expired {
+		if _, err := tx.ExecContext(ctx, `UPDATE outbox_replies SET status='dead',last_error=?,lease_until=NULL WHERE id=?`, reason, r.id); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO processed_messages(id,sender,status,reply_pending,command,error_kind,error_summary,updated_at)
+VALUES(?,?,?,?,?,?,?,?)
+ON CONFLICT(id) DO UPDATE SET status=excluded.status,reply_pending=excluded.reply_pending,error_kind=excluded.error_kind,error_summary=excluded.error_summary,updated_at=excluded.updated_at`,
+			r.messageID, "", MessageDead, 0, "", "reply_delivery", reason, dbTime(now)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Store) CompleteReply(ctx context.Context, r *Reply) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -422,9 +472,32 @@ func (s *Store) Health(ctx context.Context) (HealthSummary, error) {
 	if err != nil {
 		return h, err
 	}
-	h.LatestFailures, err = s.RecentEvents(ctx, 5)
+	h.LatestFailures, err = s.recentErrorEvents(ctx, 5)
 	return h, err
 }
+
+func (s *Store) recentErrorEvents(ctx context.Context, limit int) ([]RuntimeEvent, error) {
+	if limit < 1 {
+		limit = 1
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id,at,severity,phase,message_id,command,handler,error_kind,summary FROM runtime_events WHERE severity='error' ORDER BY id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RuntimeEvent
+	for rows.Next() {
+		var e RuntimeEvent
+		var at string
+		if err := rows.Scan(&e.ID, &at, &e.Severity, &e.Phase, &e.MessageID, &e.Command, &e.Handler, &e.ErrorKind, &e.Summary); err != nil {
+			return nil, err
+		}
+		e.At, _ = parseDBTime(at)
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) Enqueue(ctx context.Context, cmd string, params map[string]any, key string, max int, at time.Time) (int64, error) {
 	if max < 1 {
 		max = 1
@@ -449,10 +522,16 @@ func (s *Store) ClaimJob(ctx context.Context, now time.Time, lease time.Duration
 		return nil, err
 	}
 	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE queue_jobs SET status='dead',result=?,lease_until=NULL WHERE status='running' AND lease_until<? AND attempts>=max_attempts`, safeExpiredLeaseReason("queue"), dbTime(now)); err != nil {
+		return nil, err
+	}
 	var j Job
 	var raw, at string
 	err = tx.QueryRowContext(ctx, `SELECT id,command,params_json,attempts,max_attempts,available_at FROM queue_jobs WHERE (status='pending' OR (status='running' AND lease_until<?)) AND available_at<=? AND attempts<max_attempts ORDER BY id LIMIT 1`, dbTime(now), dbTime(now)).Scan(&j.ID, &j.Command, &raw, &j.Attempts, &j.MaxAttempts, &at)
 	if errors.Is(err, sql.ErrNoRows) {
+		if err = tx.Commit(); err != nil {
+			return nil, err
+		}
 		return nil, nil
 	}
 	if err != nil {

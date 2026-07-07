@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/becomeopc/opc-mailrelay/internal/command"
+	"github.com/becomeopc/opc-mailrelay/internal/handler"
 	"github.com/becomeopc/opc-mailrelay/internal/mailbox"
 	"os"
 	"path/filepath"
@@ -190,6 +191,57 @@ commands: []
 	}
 	if strings.Contains(events[0].Summary, "vip@example.com") || strings.Contains(events[0].Summary, "topsecret") {
 		t.Fatalf("raw receiver error leaked into summary: %#v", events[0])
+	}
+	state, err := r.store.State(context.Background(), "last_runtime_error")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state != "mail receiver failed" {
+		t.Fatalf("unexpected last_runtime_error: %q", state)
+	}
+	if strings.Contains(state, "vip@example.com") || strings.Contains(state, "topsecret") {
+		t.Fatalf("raw receiver error leaked into runtime state: %q", state)
+	}
+}
+
+func TestRuntimeBuildWiresRetryPolicy(t *testing.T) {
+	d := t.TempDir()
+	path := filepath.Join(d, "mailrelay.yaml")
+	body := `mail:
+  imap: {address: "imap.example.com:993", username: u, password: p}
+  smtp: {address: "smtp.example.com:465", username: u, password: p, from: relay@example.com}
+security: {token: secret, allow: [me@example.com], http_hosts: [api.example.com]}
+storage: {path: relay.db}
+runtime: {reply_max_attempts: 2, queue_max_attempts: 6, initial_backoff: 10s, max_backoff: 15s}
+commands:
+  - name: push
+    handler: queue
+    config: {command: deploy}
+  - name: deploy
+    handler: http
+    config: {url: "https://api.example.com/deploy"}
+`
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Build(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if r.app.replyMaxAttempts != 2 || r.app.initialBackoff != 10*time.Second || r.app.maxBackoff != 15*time.Second {
+		t.Fatalf("app retry policy not wired: %#v", r.app)
+	}
+	q, ok := r.registry.Get("queue")
+	if !ok {
+		t.Fatal("queue handler not registered")
+	}
+	queue, ok := q.(*handler.Queue)
+	if !ok {
+		t.Fatalf("unexpected queue handler type %T", q)
+	}
+	if queue.DefaultMaxAttempts() != 6 || queue.InitialBackoff() != 10*time.Second || queue.MaxBackoff() != 15*time.Second {
+		t.Fatalf("queue retry policy not wired: max=%d initial=%s maxBackoff=%s", queue.DefaultMaxAttempts(), queue.InitialBackoff(), queue.MaxBackoff())
 	}
 }
 

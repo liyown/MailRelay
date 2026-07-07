@@ -51,6 +51,7 @@ func Build(path string, custom ...command.Handler) (*Runtime, error) {
 	}
 	r := &Runtime{path: path, cfg: cfg, store: s, receiver: receiver, sender: sender, registry: reg, custom: custom}
 	r.app = New(s, route, sender, cfg.Mail.SMTP.From, cfg.Security.Allow, cfg.Security.Token)
+	r.app.SetRetryPolicy(cfg.Runtime.ReplyMaxAttempts, cfg.Runtime.InitialBackoff, cfg.Runtime.MaxBackoff)
 	if st, e := os.Stat(path); e == nil {
 		r.mtime = st.ModTime()
 	}
@@ -65,7 +66,9 @@ func buildRouter(cfg *config.Config, s *store.Store, custom []command.Handler) (
 	reg := handler.NewRegistry()
 	policy := security.NetworkPolicy{Hosts: cfg.Security.HTTPHosts}
 	client := policy.HTTPClient(30 * time.Second)
-	builtins := []command.Handler{handler.NewHTTP(client, policy), handler.NewWebhook(client, policy), handler.NewWorkflow(64, 8), handler.NewPlugin(), handler.NewShell(), handler.NewAgent(client), handler.NewMCP(client), handler.NewQueue(s)}
+	queue := handler.NewQueue(s)
+	queue.SetRetryPolicy(cfg.Runtime.QueueMaxAttempts, cfg.Runtime.InitialBackoff, cfg.Runtime.MaxBackoff)
+	builtins := []command.Handler{handler.NewHTTP(client, policy), handler.NewWebhook(client, policy), handler.NewWorkflow(64, 8), handler.NewPlugin(), handler.NewShell(), handler.NewAgent(client), handler.NewMCP(client), queue}
 	for _, h := range append(builtins, custom...) {
 		if err := reg.Register(h); err != nil {
 			return nil, nil, err
@@ -99,7 +102,10 @@ func (r *Runtime) Once(ctx context.Context) error {
 		}
 	}
 	for i := 0; i < 100; i++ {
-		worked, err := handler.RunOneJob(ctx, r.store, a, 30*time.Second)
+		r.mu.RLock()
+		initialBackoff, maxBackoff := r.cfg.Runtime.InitialBackoff, r.cfg.Runtime.MaxBackoff
+		r.mu.RUnlock()
+		worked, err := handler.RunOneJobWithPolicy(ctx, r.store, a, 30*time.Second, initialBackoff, maxBackoff)
 		if err != nil {
 			return err
 		}
@@ -122,8 +128,8 @@ func (r *Runtime) Run(ctx context.Context) error {
 		}
 		if err := r.Once(ctx); err != nil {
 			_ = r.store.AddEvent(context.Background(), store.RuntimeEvent{Severity: "error", Phase: "receiver", ErrorKind: "dependency", Summary: runtimeEventSummary("receiver")})
-			_ = r.store.SetState(context.Background(), "last_runtime_error", err.Error())
-			slog.Error("mail poll failed", "error", err)
+			_ = r.store.SetState(context.Background(), "last_runtime_error", runtimeEventSummary("receiver"))
+			slog.Error("mail poll failed", "error", runtimeEventSummary("receiver"))
 			select {
 			case <-ctx.Done():
 				return nil
@@ -191,6 +197,7 @@ func (r *Runtime) reloadIfChanged(ctx context.Context) error {
 	r.app.mu.Unlock()
 	r.app.ReplaceRouter(route)
 	r.app.ReplaceSecurity(cfg.Mail.SMTP.From, cfg.Security.Allow, cfg.Security.Token)
+	r.app.SetRetryPolicy(cfg.Runtime.ReplyMaxAttempts, cfg.Runtime.InitialBackoff, cfg.Runtime.MaxBackoff)
 	r.mtime = st.ModTime()
 	r.mu.Unlock()
 	return nil
