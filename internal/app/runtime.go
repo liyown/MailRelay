@@ -6,7 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,19 +21,21 @@ import (
 	"github.com/becomeopc/opc-mailrelay/internal/router"
 	"github.com/becomeopc/opc-mailrelay/internal/security"
 	"github.com/becomeopc/opc-mailrelay/internal/store"
+	webconsole "github.com/becomeopc/opc-mailrelay/internal/web"
 )
 
 type Runtime struct {
-	mu       sync.RWMutex
-	path     string
-	cfg      *config.Config
-	store    *store.Store
-	app      *App
-	receiver mailbox.Receiver
-	sender   mailbox.Sender
-	registry *handler.Registry
-	custom   []command.Handler
-	mtime    time.Time
+	mu         sync.RWMutex
+	path       string
+	cfg        *config.Config
+	store      *store.Store
+	app        *App
+	receiver   mailbox.Receiver
+	sender     mailbox.Sender
+	registry   *handler.Registry
+	custom     []command.Handler
+	mtime      time.Time
+	webAddress string
 }
 
 func Build(path string, custom ...command.Handler) (*Runtime, error) {
@@ -84,6 +89,11 @@ func buildRouter(cfg *config.Config, s *store.Store, custom []command.Handler) (
 }
 func (r *Runtime) Close() error        { return r.store.Close() }
 func (r *Runtime) Store() *store.Store { return r.store }
+func (r *Runtime) WebAddress() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.webAddress
+}
 func (r *Runtime) Once(ctx context.Context) error {
 	r.mu.RLock()
 	a := r.app
@@ -118,6 +128,71 @@ func (r *Runtime) Once(ctx context.Context) error {
 	return nil
 }
 func (r *Runtime) Run(ctx context.Context) error {
+	r.mu.RLock()
+	webConfig := r.cfg.Web
+	commands := append([]command.Command(nil), r.cfg.Commands...)
+	r.mu.RUnlock()
+	if !webConfig.Enabled {
+		return r.runMail(ctx)
+	}
+	sessions, err := webconsole.NewSessionManager(webconsole.SessionOptions{
+		Secret:       []byte(webConfig.SessionSecret),
+		PasswordHash: webConfig.AdminPasswordHash,
+		TTL:          webConfig.SessionTTL,
+		SecureCookie: strings.HasPrefix(webConfig.PublicURL, "https://"),
+	})
+	if err != nil {
+		return fmt.Errorf("web authentication: %w", err)
+	}
+	listener, err := net.Listen("tcp", webConfig.Address)
+	if err != nil {
+		return fmt.Errorf("web listen: %w", err)
+	}
+	r.mu.Lock()
+	r.webAddress = listener.Addr().String()
+	r.mu.Unlock()
+	defer func() {
+		r.mu.Lock()
+		r.webAddress = ""
+		r.mu.Unlock()
+	}()
+
+	server := &http.Server{
+		Handler:           webconsole.NewServer(webconsole.ServerOptions{Sessions: sessions, Repository: webconsole.NewRepository(r.store, commands, time.Now())}),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	mailErr := make(chan error, 1)
+	webErr := make(chan error, 1)
+	go func() { mailErr <- r.runMail(runCtx) }()
+	go func() {
+		err := server.Serve(listener)
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil
+		}
+		webErr <- err
+	}()
+
+	var result error
+	select {
+	case <-ctx.Done():
+	case result = <-mailErr:
+	case result = <-webErr:
+	}
+	cancel()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	if err := server.Shutdown(shutdownCtx); result == nil && err != nil {
+		result = err
+	}
+	return result
+}
+
+func (r *Runtime) runMail(ctx context.Context) error {
 	backoff := time.Second
 	for {
 		if ctx.Err() != nil {

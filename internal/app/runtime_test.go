@@ -1,12 +1,17 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"github.com/becomeopc/opc-mailrelay/internal/command"
 	"github.com/becomeopc/opc-mailrelay/internal/handler"
 	"github.com/becomeopc/opc-mailrelay/internal/mailbox"
 	"github.com/becomeopc/opc-mailrelay/internal/store"
+	webconsole "github.com/becomeopc/opc-mailrelay/internal/web"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,12 +53,69 @@ type cancelOnFetchReceiver struct {
 	cancel context.CancelFunc
 }
 
+type blockingReceiver struct{}
+
+func (*blockingReceiver) Fetch(context.Context, int) ([]mailbox.RawMessage, error) { return nil, nil }
+func (*blockingReceiver) MarkSeen(context.Context, uint32) error                   { return nil }
+func (*blockingReceiver) Idle(ctx context.Context) error                           { <-ctx.Done(); return ctx.Err() }
+
 func (r *cancelOnFetchReceiver) Fetch(context.Context, int) ([]mailbox.RawMessage, error) {
 	r.cancel()
 	return nil, r.err
 }
 func (r *cancelOnFetchReceiver) MarkSeen(context.Context, uint32) error { return nil }
 func (r *cancelOnFetchReceiver) Idle(context.Context) error             { return nil }
+
+func TestRuntimeServesAuthenticatedWebConsoleWhenEnabled(t *testing.T) {
+	d := t.TempDir()
+	hash, err := webconsole.HashPassword("console-password", bytes.NewReader(bytes.Repeat([]byte{3}, 32)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(d, "mailrelay.yaml")
+	body := fmt.Sprintf(`mail:
+  imap: {address: "imap.example.com:993", username: u, password: p}
+  smtp: {address: "smtp.example.com:465", username: u, password: p, from: relay@example.com}
+security: {token: secret, allow: [me@example.com]}
+storage: {path: relay.db}
+web:
+  enabled: true
+  address: "127.0.0.1:0"
+  session_secret: "12345678901234567890123456789012"
+  admin_password_hash: %q
+commands: []
+`, hash)
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := Build(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.Close()
+	runtime.receiver = &blockingReceiver{}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runtime.Run(ctx) }()
+	t.Cleanup(func() { cancel(); <-done })
+
+	deadline := time.Now().Add(2 * time.Second)
+	for runtime.WebAddress() == "" && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if runtime.WebAddress() == "" {
+		t.Fatal("web listener did not start")
+	}
+	response, err := http.Post("http://"+runtime.WebAddress()+"/api/v1/login", "application/json", strings.NewReader(`{"password":"console-password"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	content, _ := io.ReadAll(response.Body)
+	if response.StatusCode != http.StatusOK || !bytes.Contains(content, []byte(`"csrf"`)) {
+		t.Fatalf("status=%d body=%s", response.StatusCode, content)
+	}
+}
 
 func TestHotReloadIsAtomicAndKeepsLastValidConfig(t *testing.T) {
 	d := t.TempDir()

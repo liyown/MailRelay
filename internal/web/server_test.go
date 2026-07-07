@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -80,5 +81,20 @@ func TestRoutesRejectMalformedFiltersAndMethods(t *testing.T) {
 	h.ServeHTTP(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("filter status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestServerEmbedsSPAAndFallsBackForClientRoutes(t *testing.T) {
+	h := newTestServer(t)
+	for _, target := range []string{"/", "/executions"} {
+		req := httptest.NewRequest(http.MethodGet, target, nil)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != http.StatusOK || !bytes.Contains(w.Body.Bytes(), []byte("MailRelay")) {
+			t.Fatalf("target=%s status=%d body=%s", target, w.Code, w.Body.String())
+		}
+		if !strings.Contains(w.Header().Get("Content-Type"), "text/html") {
+			t.Fatalf("target=%s content-type=%q", target, w.Header().Get("Content-Type"))
+		}
 	}
 }

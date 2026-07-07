@@ -39,6 +39,7 @@ func (s *server) routes() {
 	s.mux.HandleFunc("GET /api/v1/replies", s.requireSession(s.replies))
 	s.mux.HandleFunc("GET /api/v1/events", s.requireSession(s.events))
 	s.mux.HandleFunc("GET /api/v1/system", s.requireSession(s.system))
+	s.mux.HandleFunc("/", s.serveSPA)
 }
 
 func (s *server) security(next http.Handler) http.Handler {
@@ -47,6 +48,7 @@ func (s *server) security(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
 		w.Header().Set("X-Request-ID", requestID())
 		next.ServeHTTP(w, r)
 	})

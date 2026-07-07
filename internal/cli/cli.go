@@ -339,6 +339,10 @@ security:
 storage:
   path: data/mailrelay.db
 
+web:
+  enabled: false
+  address: 127.0.0.1:8787
+
 runtime:
   command_timeout: 30s
   config_reload: true
