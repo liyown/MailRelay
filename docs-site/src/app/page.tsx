@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { absoluteUrl, jsonLd, site } from '@/lib/seo';
 
 const scenarios = [
   { n: '01', title: '移动运维', copy: '手机发 deploy、backup 或 status，服务端按配置执行并回信。', subject: 'deploy', result: 'workflow · 3 steps · success' },
@@ -26,26 +27,49 @@ const trust = [
   ['Two keys, one door', '发件人 allowlist 与常量时间 Token 校验同时生效。'],
   ['Idempotent at the edge', 'Message-ID 去重与 SQLite 原子 claim 降低重复执行风险。'],
   ['Execution is not delivery', 'Outbox 将执行结果与 SMTP 投递解耦。'],
-  ['The network has boundaries', 'HTTP 固定 HTTPS 主机，并校验 DNS、IP 与重定向。'],
+  ['The network has boundaries', 'HTTP 主机由配置锁定，path/query 可映射参数，并校验 DNS、IP 与重定向。'],
   ['Failure stays visible', '重试耗尽后保留在 dead letter，必须显式 replay。'],
   ['Secrets leave no trail', '凭证、完整正文与敏感参数不写入审计。'],
 ];
 
 const handlers = [
-  ['stable', 'HTTP & Webhook', '只调用配置中的固定 HTTPS 目标，遵守出站主机策略。'],
-  ['beta', 'Workflow & Queue', '声明式步骤、持久队列、租约恢复与重试。'],
+  ['stable', 'HTTP / HTTP Request / Webhook', '配置式调用或转发 HTTP 请求，遵守出站主机策略。'],
+  ['stable', 'Workflow & Queue', '声明式步骤、持久队列、租约恢复与重试。'],
   ['experimental', 'Plugin & Shell', '固定绝对路径，无 shell 拼接，输入输出受限。'],
   ['experimental', 'Agent & MCP', '固定端点、模型、提示词和 Tool allowlist。'],
 ];
 
 export default function HomePage() {
+  const structuredData = {
+    '@context': 'https://schema.org',
+    '@graph': [
+      {
+        '@type': 'WebSite',
+        name: site.name,
+        url: absoluteUrl('/'),
+        description: site.description,
+        inLanguage: 'zh-CN',
+      },
+      {
+        '@type': 'SoftwareApplication',
+        name: site.name,
+        applicationCategory: 'DeveloperApplication',
+        operatingSystem: 'macOS, Linux',
+        url: absoluteUrl('/'),
+        codeRepository: site.github,
+        description: site.description,
+        offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+      },
+    ],
+  };
   return (
     <div className="landing">
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd(structuredData) }} />
       <Header />
       <main>
         <section className="hero">
           <div>
-            <span className="eyebrow"><b>NEW</b> stable HTTP/Webhook path</span>
+            <span className="eyebrow"><b>NEW</b> stable HTTP-family, Workflow & Queue</span>
             <h1>用邮件执行可审计的远程操作。</h1>
             <p className="lead">MailRelay 在单机上接收认证邮件，将其解析为受限 Command，再交给配置声明的 Handler 执行。去重、审计、重试、dead letter 与回复投递都由 SQLite 持久化。</p>
             <Install />
@@ -104,12 +128,12 @@ export default function HomePage() {
 
         <section className="landing-section" id="handlers"><div className="section-inner">
           <p className="section-label">Handler maturity</p><h2>一个 Router，多个受控执行模型。</h2>
-          <p className="section-intro">HTTP/Webhook 是稳定路径；Queue、Workflow 和实验能力清楚标注成熟度。</p>
+          <p className="section-intro">HTTP、HTTP Request、Webhook、Queue 和 Workflow 是稳定路径；本地进程、Agent 与 MCP 清楚标注为实验能力。</p>
           <div className="stories">{handlers.map(([tag,title,text]) => <article className="story" key={title}><span className={`maturity ${tag}`}>{tag}</span><h3>{title}</h3><p>{text}</p></article>)}</div>
         </div></section>
 
         <section className="landing-section final-cta"><div className="section-inner cta">
-          <p className="section-label">First stable command</p><h2>先跑通一个固定 HTTPS 命令。</h2>
+          <p className="section-label">First stable command</p><h2>先跑通一个受控 HTTP 命令。</h2>
           <p className="section-intro">初始化配置，检查策略，发送第一封命令邮件，再用状态和回复确认链路。</p>
           <div className="quickstart"><div><span>01</span><code>mailrelay init</code></div><div><span>02</span><code>mailrelay doctor</code></div><div><span>03</span><code>mailrelay run</code></div></div>
           <div className="cta-actions"><Link className="primary-button" href="/docs/getting-started/installation">开始使用</Link><Link className="secondary-button" href="/docs/getting-started/first-command">创建第一个命令</Link></div>

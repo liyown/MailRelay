@@ -1,6 +1,6 @@
 ---
-title: HTTP 与 Webhook
-description: Stable 网络 Handler 的配置与安全策略。
+title: HTTP、HTTP Request 与 Webhook
+description: Stable 网络 Handler 的配置、转发格式与安全策略。
 ---
 
 ## HTTP
@@ -15,7 +15,43 @@ config:
   body: '{"message":"{{message}}"}'
 ```
 
-参数只可进入 Body 或固定 Header 值，不能改变 URL scheme 或 authority。响应正文最多读取 1 MiB。
+参数可进入 Body、Header 值、path 模板或 `query` 配置，但不能改变 URL scheme、credentials 或 authority。`security.http_hosts` 必须包含目标主机；DNS、拨号和重定向都会经过 outbound policy 检查。响应正文最多读取 1 MiB。
+
+```yaml
+handler: http
+config:
+  method: GET
+  url: https://api.example.com/push/{{message}}
+  query:
+    source: mailrelay
+```
+
+`url` 中的 query 不支持 `{{param}}` 模板；需要动态 query 时使用 `config.query`，MailRelay 会负责编码。没有请求体时不会自动添加 `Content-Type`。
+
+## HTTP Request
+
+`http_request` 适合邮件正文已经是 HTTP/1.1 请求报文的场景。它不会把正文解析成参数，而是读取原始报文并转发：
+
+```yaml
+handler: http_request
+config:
+  base_url: https://api.example.com
+```
+
+邮件示例：
+
+```text
+Subject: forward
+X-MailRelay-Token: your-token
+
+POST /events HTTP/1.1
+Host: api.example.com
+Content-Type: application/json
+
+{"message":"hello"}
+```
+
+请求行可以使用绝对 URL，也可以使用 origin-form path；后者需要 `base_url` 提供 scheme 和默认 host。最终目标仍必须通过 `security.http_hosts` 和 SSRF 防护。由于正文会被当作 HTTP 报文转发，`http_request` 消息必须使用 `X-MailRelay-Token` Header 认证，不要依赖 `_token` body 字段。
 
 ## Webhook
 
@@ -32,3 +68,5 @@ Webhook 发送固定 JSON Envelope：
 ```
 
 配置 `secret` 后添加 `X-MailRelay-Signature: sha256=...` HMAC Header。
+
+Webhook 使用与 HTTP 相同的 host allowlist、path/query 模板规则和网络防护，并会记录脱敏截断的请求/响应快照用于排障。

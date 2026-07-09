@@ -1,12 +1,37 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import { Provider } from '@/components/provider';
+import { absoluteUrl, keywords, site } from '@/lib/seo';
 import './global.css';
 
 export const metadata: Metadata = {
-  metadataBase: new URL('https://liyown.github.io/MailRelay/'),
+  metadataBase: new URL(`${site.url}/`),
+  applicationName: site.name,
   title: { default: 'MailRelay — 可审计的邮件远程操作', template: '%s | MailRelay' },
-  description: '用认证邮件触发受限 Command，并持久化去重、审计、重试与回复投递。',
+  description: site.description,
+  keywords,
+  authors: [{ name: 'becomeopc' }],
+  creator: 'becomeopc',
+  publisher: 'becomeopc',
+  category: 'developer tools',
+  alternates: { canonical: absoluteUrl('/') },
+  openGraph: {
+    type: 'website',
+    locale: site.locale,
+    url: absoluteUrl('/'),
+    siteName: site.name,
+    title: site.title,
+    description: site.description,
+  },
+  twitter: {
+    card: 'summary',
+    title: site.title,
+    description: site.description,
+  },
+  robots: {
+    index: true,
+    follow: true,
+  },
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

@@ -5,7 +5,8 @@ description: 内置 Handler、成熟度和统一执行边界。
 
 | Handler | 成熟度 | 用途 |
 | --- | --- | --- |
-| HTTP | Stable | 调用固定 HTTPS API |
+| HTTP | Stable | 调用配置式 HTTP API，支持安全的 path/query 参数 |
+| HTTP Request | Stable | 将邮件正文中的 HTTP 请求报文直接转发 |
 | Webhook | Stable | 发送签名事件 Envelope |
 | Workflow | Stable | 有界、无环地组合声明式 Command |
 | Queue | Stable | SQLite 异步任务、有限重试和显式恢复 |

@@ -33,4 +33,16 @@ message=hello
 
 MailRelay 会验证发件人和 Token、声明式参数、执行 HTTP Handler、写入 SQLite，再发送带 `In-Reply-To` 的结果邮件。
 
+邮件正文可以是每行一个 `key=value`，也可以是 JSON 对象：
+
+```text
+Subject: push
+X-MailRelay-Token: your-token
+Content-Type: application/json
+
+{"message":"hello"}
+```
+
+如果客户端不能添加 Header，可以把 `_token` 放在正文参数中；Header Token 优先。使用 `http_request` Handler 时正文会被当作原始 HTTP 请求转发，必须使用 `X-MailRelay-Token` Header。
+
 发送 `Subject: help push` 可以查看这条命令的描述、参数和自动生成的示例。

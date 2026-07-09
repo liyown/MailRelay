@@ -12,10 +12,14 @@ handler: workflow
 config:
   steps:
     - command: build
+      params:
+        ref: "{{ref}}"
     - command: deploy
       params:
         env: "{{env}}"
 ```
+
+步骤参数不是“临时添加的新参数”，而是目标 Command 已声明参数的显式映射。`params` 的 key 必须是目标 Command 的参数名，value 可以是 `{{workflow_param}}`，也可以是固定值。未映射的参数不会传给目标命令。
 
 直接递归、间接循环、空步骤、超过最大步骤数或最大深度都会被拒绝。配置加载还会检查步骤参数属于目标 Command、必填参数完整、模板来源存在且类型匹配；映射到敏感目标的来源参数也必须标记为敏感。Workflow 按顺序执行，第一步失败后停止，后续步骤不会运行；错误审计只记录步骤序号、Command 名称和安全分类。
 

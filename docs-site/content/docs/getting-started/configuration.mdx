@@ -48,3 +48,9 @@ export MAILRELAY_TOKEN='...'
 配置变化后执行完整解析、安全校验和 Handler 构建，成功才原子替换。无效配置会被拒绝，当前运行版本继续服务。
 
 未知字段、重复命令、保留名称 `help`、相对可执行路径和未列入 allowlist 的 HTTP 主机会直接报错。
+
+## Web Console 可编辑范围
+
+启用 Web Console 后，管理员可以通过草稿配置 API 编辑 Command Catalog、`security.token`、`security.allow`、`security.http_hosts` 和 `runtime.catalog_notify`。保存时仍会走完整配置校验，校验失败不会写盘，也不会热应用。
+
+草稿保存只替换这些可编辑节点；mail 凭据、web session secret、`${ENV_VAR}` 引用和其他未编辑注释会保留。Handler Secret 建议放在环境变量引用或 `sensitive: true` 参数中，不要直接写入可编辑的 handler config。

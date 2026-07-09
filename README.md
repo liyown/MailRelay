@@ -44,7 +44,7 @@ web:
   session_ttl: 8h
 ```
 
-Open `http://127.0.0.1:8787`. Phase 1 is read-only except for login/logout. The API never returns mailbox credentials, Command tokens, handler secrets, full mail bodies, or raw provider errors. Keep the default loopback binding unless the console is placed behind a trusted HTTPS reverse proxy.
+Open `http://127.0.0.1:8787`. The authenticated console can edit the command catalog, command token, sender allowlist, HTTP host allowlist, and catalog-change notification recipients through the draft configuration API. The API never returns mailbox credentials, web session secrets, full mail bodies, or raw provider errors. Handler secrets should stay in `${ENV_VAR}` references or `sensitive` parameters. Keep the default loopback binding unless the console is placed behind a trusted HTTPS reverse proxy.
 
 ## Sending a command
 
@@ -57,7 +57,9 @@ X-MailRelay-Token: your-token
 message=hello
 ```
 
-JSON bodies are supported with `Content-Type: application/json`. The reserved `_token` body field can be used when the sending client cannot add headers. A header token takes precedence. `Message-ID` is used for durable deduplication; messages without one receive a deterministic content hash.
+Plain text `key=value` bodies and JSON object bodies are supported. For JSON, use `Content-Type: application/json`. The reserved `_token` body field can be used when the sending client cannot add headers. A header token takes precedence. `Message-ID` is used for durable deduplication; messages without one receive a deterministic content hash.
+
+Commands using the `http_request` handler are different: the mail body is treated as an HTTP request transcript and forwarded. Use `X-MailRelay-Token` for those messages, because `_token` would be part of the forwarded HTTP body.
 
 ## Discovery
 
@@ -95,14 +97,46 @@ All handlers implement the same consumer-side interface. The Router only resolve
 
 Support levels are part of generated Discovery output:
 
-- **Stable:** `http`, `webhook`, `workflow`, `queue` — supported for the v0.1 golden path and recovery lifecycle.
+- **Stable:** `http`, `http_request`, `webhook`, `workflow`, `queue` — supported for the v0.1 golden path and recovery lifecycle.
 - **Experimental:** `plugin`, `shell`, `agent`, `mcp`, and custom handlers — APIs and safety limits may still change.
 
 ### `http`
 
-Calls a fixed HTTPS URL. The hostname must be listed in `security.http_hosts`. URL templates are forbidden. Resolved private, loopback, link-local, multicast, unspecified, carrier-grade NAT, and metadata addresses are rejected at validation and dial time. Cross-host redirects are rejected.
+Calls a configured HTTP endpoint. The hostname must be listed in `security.http_hosts`. Scheme, credentials, and host must be static; path segments may use `{{param}}` templates, and query parameters should be configured with `query` so values are encoded safely. Resolved private, loopback, link-local, multicast, unspecified, carrier-grade NAT, and metadata addresses are rejected at validation and dial time. Cross-host redirects are rejected.
 
-Configuration keys: `url`, `method`, `headers`, and `body`.
+Configuration keys: `url`, `method`, `headers`, `body`, and `query`.
+
+```yaml
+config:
+  method: GET
+  url: https://api.example.com/push/{{message}}
+  query:
+    source: mailrelay
+```
+
+If `body` is empty, MailRelay does not add a default `Content-Type` header.
+
+### `http_request`
+
+Forwards the mail body as an HTTP/1.1 request. The request line may contain an absolute URL, or an origin-form path when `config.base_url` supplies the scheme and fallback host. The final destination is still checked by `security.http_hosts` and the outbound network policy.
+
+```yaml
+commands:
+  - name: forward
+    handler: http_request
+    config:
+      base_url: https://api.example.com
+```
+
+Example mail body:
+
+```http
+POST /events HTTP/1.1
+Host: api.example.com
+Content-Type: application/json
+
+{"message":"hello"}
+```
 
 ### `webhook`
 
@@ -110,7 +144,7 @@ POSTs a standard JSON envelope containing version, command, request ID, timestam
 
 ### `workflow`
 
-Runs a bounded list of configured command steps through the Router. Each step has `command` and optional `params`. Values such as `{{env}}` map request parameters. Missing targets, direct or indirect recursion, excessive depth, timeouts, and excessive step counts fail safely. Execution stops on the first failed step.
+Runs a bounded list of configured command steps through the Router. Each step has `command` and an explicit `params` mapping for the target command's declared parameters. Values such as `{{env}}` read workflow request parameters; fixed values are passed as-is. Required target parameters must be mapped, unknown target parameters are rejected, and sensitive target parameters must be sourced from sensitive workflow parameters. Missing targets, direct or indirect recursion, excessive depth, timeouts, and excessive step counts fail safely. Execution stops on the first failed step.
 
 ### `queue`
 
@@ -154,6 +188,14 @@ mailrelay help     print CLI usage
 
 Use `--config path` before or after the command, or set `MAILRELAY_CONFIG`.
 
+When working from the repository, the Taskfile includes the common development loops:
+
+```bash
+task dev            watch files, rebuild the embedded console, and restart via Air
+task console-embed  build console/dist and copy it into internal/web/ui
+task test-all       run Go race tests and console tests
+```
+
 ## Operations and safety
 
 - Dangerous capabilities are disabled until a command explicitly selects them.
@@ -166,7 +208,7 @@ Use `--config path` before or after the command, or set `MAILRELAY_CONFIG`.
 - IMAP prefers IDLE and falls back to bounded polling/reconnect backoff.
 - Command execution and SMTP delivery are separated by a durable SQLite outbox. SMTP retry never executes a Handler twice.
 - Exhausted queue jobs and replies remain in dead-letter state until an operator uses `mailrelay replay`.
-- Logs and SQLite never store tokens, mailbox passwords, API keys, or full mail bodies.
+- SQLite audit records never store tokens, mailbox passwords, API keys, or full mail bodies. Operational logs redact sensitive parameters and include truncated HTTP request/response snapshots for `http`, `http_request`, and `webhook` troubleshooting.
 - Back up the YAML file and SQLite database together while MailRelay is stopped, or use SQLite's online backup tooling.
 
 ## Development
@@ -182,7 +224,7 @@ The architecture and accepted security boundaries are documented in `docs/superp
 
 ## 72-hour acceptance run
 
-Use a dedicated mailbox and one Stable HTTP/Webhook command. Start with an empty queue and outbox:
+Use a dedicated mailbox and one Stable HTTP-family/Webhook command. Start with an empty queue and outbox:
 
 ```bash
 mailrelay doctor

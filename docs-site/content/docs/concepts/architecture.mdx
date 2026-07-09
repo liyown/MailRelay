@@ -22,7 +22,7 @@ Result + Audit + SMTP Outbox
 - **Receiver** 只接收原始邮件，不理解 HTTP 或 Workflow。
 - **Parser** 将 Subject、Body 和附件元数据转换成 `CommandRequest`。
 - **Router** 解析 Command 名称并委托给注册的 Handler。
-- **Handler** 只接收规范化参数，不接触原始邮件。
+- **Handler** 默认只接收规范化参数；`http_request` 这类显式转发 Handler 会额外接收原始正文。
 - **Store** 管理幂等、审计、Catalog、Queue、Outbox 和运行状态。
 
 Router 没有任何 `switch handler` 分支。新增构建期 Custom Handler 只需要实现统一接口并注册。

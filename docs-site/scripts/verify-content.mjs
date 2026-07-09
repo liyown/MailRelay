@@ -16,7 +16,8 @@ for (const file of required) await access(new URL(file, root));
 
 const landing = await readFile(new URL('src/app/page.tsx', root), 'utf8');
 const metadata = await readFile(new URL('src/app/layout.tsx', root), 'utf8');
-const publicCopy = `${landing}\n${metadata}`;
+const seo = await readFile(new URL('src/lib/seo.ts', root), 'utf8');
+const publicCopy = `${landing}\n${metadata}\n${seo}`;
 const handlerOverview = await readFile(new URL('content/docs/handlers/index.mdx', root), 'utf8');
 const workflowQueue = await readFile(new URL('content/docs/handlers/workflow-queue.mdx', root), 'utf8');
 const reliability = await readFile(new URL('content/docs/operations/reliability.mdx', root), 'utf8');
