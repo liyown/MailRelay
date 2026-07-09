@@ -4,6 +4,18 @@
 
 version: '3'
 
+vars:
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+  COMMIT:
+    sh: git rev-parse --short HEAD 2>/dev/null || echo unknown
+  BUILD_TIME:
+    sh: date -u '+%Y-%m-%dT%H:%M:%SZ'
+  LDFLAGS: >-
+    -X github.com/becomeopc/opc-mailrelay/internal/version.Version={{.VERSION}}
+    -X github.com/becomeopc/opc-mailrelay/internal/version.Commit={{.COMMIT}}
+    -X github.com/becomeopc/opc-mailrelay/internal/version.BuildTime={{.BUILD_TIME}}
+
 tasks:
 
   # ── Default ────────────────────────────────────────────────────────────────
@@ -17,7 +29,13 @@ tasks:
 
   build:
     desc: Build the mailrelay binary
-    cmds: [go build ./cmd/mailrelay]
+    cmds:
+      - go build -ldflags "{{.LDFLAGS}}" ./cmd/mailrelay
+
+  build-dev:
+    desc: Build the dev mailrelay binary used by task dev
+    cmds:
+      - go build -ldflags "{{.LDFLAGS}}" -o ./.dev/mailrelay ./cmd/mailrelay
 
   test:
     desc: Run all tests
@@ -47,7 +65,8 @@ tasks:
 
   run:
     desc: Start the service
-    cmds: [go run ./cmd/mailrelay run]
+    cmds:
+      - go run -ldflags "{{.LDFLAGS}}" ./cmd/mailrelay run
 
   dev:
     desc: Watch files, rebuild embedded console + Go binary, and restart
@@ -56,15 +75,18 @@ tasks:
 
   once:
     desc: Process one email and exit
-    cmds: [go run ./cmd/mailrelay once]
+    cmds:
+      - go run -ldflags "{{.LDFLAGS}}" ./cmd/mailrelay once
 
   status:
     desc: Show runtime status
-    cmds: [go run ./cmd/mailrelay status]
+    cmds:
+      - go run -ldflags "{{.LDFLAGS}}" ./cmd/mailrelay status
 
   doctor:
     desc: Run diagnostics
-    cmds: [go run ./cmd/mailrelay doctor]
+    cmds:
+      - go run -ldflags "{{.LDFLAGS}}" ./cmd/mailrelay doctor
 
   # ── Console ────────────────────────────────────────────────────────────────
 

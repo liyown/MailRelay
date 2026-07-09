@@ -2,7 +2,7 @@ root = "."
 tmp_dir = ".dev/air"
 
 [build]
-cmd = "task console-embed && go build -o ./.dev/mailrelay ./cmd/mailrelay"
+cmd = "task console-embed && task build-dev"
 entrypoint = ["./.dev/mailrelay", "run", "--config", "mailrelay.yaml"]
 delay = 800
 exclude_dir = [

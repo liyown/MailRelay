@@ -35,10 +35,11 @@ mailrelay run
 
 ```bash
 task dev
+task build
 task console-embed
 task test-all
 ```
 
-`task dev` 使用 Air 监听 Go、Console 和配置文件变更，自动重新构建嵌入式前端并重启服务。
+`task build` 和 `task dev` 会注入 Version、Commit 和 BuildTime；`task dev` 使用 Air 监听 Go、Console 和配置文件变更，自动重新构建嵌入式前端并重启服务。
 
 退出码：`0` 成功，`1` 运行失败，`2` 配置或用法错误。

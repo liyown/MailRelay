@@ -193,6 +193,7 @@ When working from the repository, the Taskfile includes the common development l
 ```bash
 task dev            watch files, rebuild the embedded console, and restart via Air
 task console-embed  build console/dist and copy it into internal/web/ui
+task build          build the binary with Version, Commit, and BuildTime metadata
 task test-all       run Go race tests and console tests
 ```
 
