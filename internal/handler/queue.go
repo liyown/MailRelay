@@ -7,6 +7,7 @@ import (
 	"github.com/becomeopc/opc-mailrelay/internal/command"
 	"github.com/becomeopc/opc-mailrelay/internal/security"
 	"github.com/becomeopc/opc-mailrelay/internal/store"
+	"log/slog"
 	"time"
 )
 
@@ -53,8 +54,10 @@ func (q *Queue) Execute(ctx context.Context, x command.Context) (command.Result,
 	}
 	id, err := q.store.Enqueue(ctx, target, security.Redact(redactFrom, x.Request.Params), key, max, time.Now())
 	if err != nil {
+		slog.Warn("queue enqueue failed", "command", x.Command.Name, "message_id", x.Request.MessageID, "target", target, "error", safeErrorText(err, commandSensitiveValues(redactFrom, x.Request.Params)))
 		return command.Result{}, err
 	}
+	slog.Info("queue job enqueued", "command", x.Command.Name, "message_id", x.Request.MessageID, "target", target, "job_id", id, "max_attempts", max)
 	return command.Result{Status: "success", Summary: "Queued", Data: map[string]any{"job_id": id}}, nil
 }
 func RunOneJob(ctx context.Context, s *store.Store, e command.Executor, lease time.Duration) (bool, error) {
@@ -68,6 +71,7 @@ func RunOneJobWithPolicy(ctx context.Context, s *store.Store, e command.Executor
 	res, err := e.Execute(ctx, command.Request{MessageID: fmt.Sprintf("queue:%d", j.ID), Name: j.Command, Params: j.Params, Received: time.Now()})
 	if err != nil {
 		kind := queueFailureKind(err)
+		detail := safeErrorText(err, nil)
 		var persistErr error
 		if terminalQueueFailure(kind) {
 			persistErr = s.RejectJob(ctx, j, kind)
@@ -84,12 +88,14 @@ func RunOneJobWithPolicy(ctx context.Context, s *store.Store, e command.Executor
 			Command:   j.Command,
 			Handler:   "queue",
 			ErrorKind: kind,
-			Summary:   "queue job failed",
+			Summary:   "queue job failed: " + detail,
 		}); eventErr != nil {
 			return true, eventErr
 		}
+		slog.Warn("queue job failed", "job_id", j.ID, "command", j.Command, "attempt", j.Attempts, "max_attempts", j.MaxAttempts, "error_kind", kind, "error", detail)
 		return true, nil
 	}
+	slog.Info("queue job completed", "job_id", j.ID, "command", j.Command, "summary", safeLogText(res.Summary, nil))
 	return true, s.CompleteJob(ctx, j.ID, res.Summary)
 }
 func queueFailureKind(err error) string {

@@ -246,7 +246,7 @@ func (c *Config) Validate() error {
 	for _, h := range c.Security.HTTPHosts {
 		hosts[strings.ToLower(h)] = true
 	}
-	known := map[string]bool{"http": true, "webhook": true, "workflow": true, "plugin": true, "shell": true, "agent": true, "mcp": true, "queue": true}
+	known := map[string]bool{"http": true, "http_request": true, "webhook": true, "workflow": true, "plugin": true, "shell": true, "agent": true, "mcp": true, "queue": true}
 	for _, cmd := range c.Commands {
 		if !validName.MatchString(cmd.Name) || cmd.Name == "help" {
 			return fmt.Errorf("invalid or reserved command name %q", cmd.Name)

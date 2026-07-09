@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/becomeopc/opc-mailrelay/internal/command"
 	"io"
+	"log/slog"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -64,25 +65,38 @@ func allowedTool(tool string, v any) bool {
 }
 func (m *MCP) callHTTP(ctx context.Context, x command.Context, tool string) (json.RawMessage, error) {
 	url, _ := x.Command.Config["url"].(string)
-	if _, err := m.rpcHTTP(ctx, url, 1, "initialize", map[string]any{"protocolVersion": "2025-03-26", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "mailrelay", "version": "1"}}); err != nil {
+	if _, err := m.rpcHTTP(ctx, x, url, 1, "initialize", map[string]any{"protocolVersion": "2025-03-26", "capabilities": map[string]any{}, "clientInfo": map[string]any{"name": "mailrelay", "version": "1"}}); err != nil {
 		return nil, err
 	}
-	return m.rpcHTTP(ctx, url, 2, "tools/call", map[string]any{"name": tool, "arguments": x.Request.Params})
+	return m.rpcHTTP(ctx, x, url, 2, "tools/call", map[string]any{"name": tool, "arguments": x.Request.Params})
 }
-func (m *MCP) rpcHTTP(ctx context.Context, url string, id int, method string, params any) (json.RawMessage, error) {
+func (m *MCP) rpcHTTP(ctx context.Context, x command.Context, url string, id int, method string, params any) (json.RawMessage, error) {
 	b, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
-	req, _ := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(b))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, text/event-stream")
-	resp, err := m.client.Do(req)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(b))
 	if err != nil {
 		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	sensitiveValues := commandSensitiveValues(x.Command, x.Request.Params)
+	requestSnapshot := httpRequestSnapshot(req, string(b), sensitiveValues)
+	slog.Info("mcp http request snapshot", "command", x.Command.Name, "message_id", x.Request.MessageID, "method", method, "request", requestSnapshot["transcript"])
+	resp, err := m.client.Do(req)
+	if err != nil {
+		slog.Warn("mcp http request failed", "command", x.Command.Name, "message_id", x.Request.MessageID, "method", method, "request", requestSnapshot["transcript"], "error", safeErrorText(err, sensitiveValues))
+		return nil, &command.Error{Kind: "dependency", Message: "MCP HTTP request failed", Err: err}
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if err != nil {
 		return nil, err
 	}
+	responseSnapshot := httpResponseSnapshot(resp, raw, sensitiveValues)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		slog.Warn("mcp http response snapshot", "command", x.Command.Name, "message_id", x.Request.MessageID, "method", method, "request", requestSnapshot["transcript"], "response", responseSnapshot["transcript"])
+		return nil, &command.Error{Kind: "dependency", Message: fmt.Sprintf("MCP HTTP status %d: %s", resp.StatusCode, snapshotString(string(raw), sensitiveValues))}
+	}
+	slog.Info("mcp http response snapshot", "command", x.Command.Name, "message_id", x.Request.MessageID, "method", method, "request", requestSnapshot["transcript"], "response", responseSnapshot["transcript"])
 	var msg struct {
 		Result json.RawMessage `json:"result"`
 		Error  any             `json:"error"`
@@ -91,7 +105,7 @@ func (m *MCP) rpcHTTP(ctx context.Context, url string, id int, method string, pa
 		return nil, err
 	}
 	if msg.Error != nil {
-		return nil, fmt.Errorf("MCP error: %v", msg.Error)
+		return nil, &command.Error{Kind: "dependency", Message: fmt.Sprintf("MCP error: %s", safeLogText(fmt.Sprint(msg.Error), sensitiveValues))}
 	}
 	return msg.Result, nil
 }
@@ -104,6 +118,8 @@ func (m *MCP) callStdio(ctx context.Context, x command.Context, tool string) (js
 		}
 	}
 	cmd := exec.CommandContext(ctx, exe, args...)
+	sensitiveValues := commandSensitiveValues(x.Command, x.Request.Params)
+	slog.Info("mcp stdio process started", "command", x.Command.Name, "message_id", x.Request.MessageID, "tool", tool, "executable", exe, "args", safeStringSlice(args, sensitiveValues))
 	in, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -113,6 +129,7 @@ func (m *MCP) callStdio(ctx context.Context, x command.Context, tool string) (js
 		return nil, err
 	}
 	if err = cmd.Start(); err != nil {
+		slog.Warn("mcp stdio process failed to start", "command", x.Command.Name, "message_id", x.Request.MessageID, "tool", tool, "executable", exe, "error", safeErrorText(err, sensitiveValues))
 		return nil, err
 	}
 	enc := json.NewEncoder(in)
@@ -133,13 +150,16 @@ func (m *MCP) callStdio(ctx context.Context, x command.Context, tool string) (js
 	in.Close()
 	waitErr := cmd.Wait()
 	if err != nil {
+		slog.Warn("mcp stdio call failed", "command", x.Command.Name, "message_id", x.Request.MessageID, "tool", tool, "executable", exe, "error", safeErrorText(err, sensitiveValues))
 		return nil, err
 	}
 	if waitErr != nil {
+		slog.Warn("mcp stdio process exited with error", "command", x.Command.Name, "message_id", x.Request.MessageID, "tool", tool, "executable", exe, "error", safeErrorText(waitErr, sensitiveValues))
 		return nil, waitErr
 	}
 	if msg.Error != nil {
-		return nil, fmt.Errorf("MCP error: %v", msg.Error)
+		return nil, &command.Error{Kind: "dependency", Message: fmt.Sprintf("MCP error: %s", safeLogText(fmt.Sprint(msg.Error), sensitiveValues))}
 	}
+	slog.Info("mcp stdio call completed", "command", x.Command.Name, "message_id", x.Request.MessageID, "tool", tool, "executable", exe)
 	return msg.Result, nil
 }

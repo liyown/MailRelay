@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/becomeopc/opc-mailrelay/internal/command"
+	"log/slog"
 )
 
 type Workflow struct{ maxSteps, maxDepth int }
@@ -49,8 +50,10 @@ func (w *Workflow) Execute(ctx context.Context, x command.Context) (command.Resu
 		}
 		trace := append([]string(nil), x.Request.Trace...)
 		trace = append(trace, x.Command.Name)
+		stepMessageID := fmt.Sprintf("%s:step:%d:%s", x.Request.MessageID, i+1, name)
+		slog.Info("workflow step started", "command", x.Command.Name, "message_id", x.Request.MessageID, "step", i+1, "target", name, "step_message_id", stepMessageID)
 		res, err := x.Execute.Execute(ctx, command.Request{
-			MessageID: fmt.Sprintf("%s:step:%d:%s", x.Request.MessageID, i+1, name),
+			MessageID: stepMessageID,
 			Sender:    x.Request.Sender,
 			Name:      name,
 			Params:    params,
@@ -62,12 +65,14 @@ func (w *Workflow) Execute(ctx context.Context, x command.Context) (command.Resu
 			if errors.As(err, &commandErr) && commandErr.Kind == "policy" {
 				return command.Result{}, err
 			}
+			slog.Warn("workflow step failed", "command", x.Command.Name, "message_id", x.Request.MessageID, "step", i+1, "target", name, "error", safeErrorText(err, commandSensitiveValues(x.Command, x.Request.Params)))
 			return command.Result{}, &command.Error{
 				Kind:    "workflow_step",
 				Message: fmt.Sprintf("step %d (%s) failed", i+1, name),
 				Err:     err,
 			}
 		}
+		slog.Info("workflow step completed", "command", x.Command.Name, "message_id", x.Request.MessageID, "step", i+1, "target", name, "status", res.Status, "summary", safeLogText(res.Summary, commandSensitiveValues(x.Command, x.Request.Params)))
 		summaries = append(summaries, map[string]any{"command": name, "status": res.Status, "summary": res.Summary})
 	}
 	return command.Result{Status: "success", Summary: "Workflow completed", Data: map[string]any{"steps": summaries}}, nil

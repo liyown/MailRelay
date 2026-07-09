@@ -10,14 +10,16 @@ import (
 )
 
 // Draft is the subset of configuration the web console is allowed to edit: the
-// command catalog, the outbound host allowlist, and the catalog-change
-// notification recipients. Values are carried UNRESOLVED — env ${VAR} tokens are
-// preserved verbatim — so persisting a draft never bakes a resolved secret into
-// the file.
+// command catalog, the outbound host allowlist, the catalog-change notification
+// recipients, the authentication token, and the sender allowlist. Values are
+// carried UNRESOLVED — env ${VAR} tokens are preserved verbatim — so persisting
+// a draft never bakes a resolved secret into the file.
 type Draft struct {
 	Commands      []command.Command `json:"commands"`
 	HTTPHosts     []string          `json:"http_hosts"`
 	CatalogNotify []string          `json:"catalog_notify"`
+	Token         string            `json:"token"`
+	Allow         []string          `json:"allow"`
 }
 
 // ParseDraft extracts the editable sections from raw YAML WITHOUT env
@@ -27,6 +29,8 @@ type Draft struct {
 func ParseDraft(raw []byte) (Draft, error) {
 	var doc struct {
 		Security struct {
+			Token     string   `yaml:"token"`
+			Allow     []string `yaml:"allow"`
 			HTTPHosts []string `yaml:"http_hosts"`
 		} `yaml:"security"`
 		Runtime struct {
@@ -37,7 +41,13 @@ func ParseDraft(raw []byte) (Draft, error) {
 	if err := yaml.Unmarshal(raw, &doc); err != nil {
 		return Draft{}, err
 	}
-	return Draft{Commands: doc.Commands, HTTPHosts: doc.Security.HTTPHosts, CatalogNotify: doc.Runtime.CatalogNotify}, nil
+	return Draft{
+		Commands:      doc.Commands,
+		HTTPHosts:     doc.Security.HTTPHosts,
+		CatalogNotify: doc.Runtime.CatalogNotify,
+		Token:         doc.Security.Token,
+		Allow:         doc.Security.Allow,
+	}, nil
 }
 
 // LoadDraft reads the editable sections from a config file on disk.
@@ -50,11 +60,10 @@ func LoadDraft(path string) (Draft, error) {
 }
 
 // RenderDraft returns a copy of the original YAML document with ONLY the
-// commands, security.http_hosts, and runtime.catalog_notify nodes replaced by
-// the draft's values. Every other node — mail credentials, tokens, the session
-// secret, ${VAR} references, and comments outside the edited sections — is left
-// intact. This is why editing never round-trips the resolved Config (which
-// would leak secrets); it is a surgical edit of three sub-trees only.
+// commands, security.http_hosts, security.token, security.allow, and
+// runtime.catalog_notify nodes replaced by the draft's values. Every other
+// node — mail credentials, the session secret, ${VAR} references, and comments
+// outside the edited sections — is left intact.
 func RenderDraft(original []byte, d Draft) ([]byte, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(original, &doc); err != nil {
@@ -74,11 +83,25 @@ func RenderDraft(original []byte, d Draft) ([]byte, error) {
 	}
 	setChild(root, "commands", commandsNode)
 
+	secNode := childMapping(root, "security")
+
 	hostsNode, err := encodeNode(d.HTTPHosts)
 	if err != nil {
 		return nil, err
 	}
-	setChild(childMapping(root, "security"), "http_hosts", hostsNode)
+	setChild(secNode, "http_hosts", hostsNode)
+
+	tokenNode, err := encodeNode(d.Token)
+	if err != nil {
+		return nil, err
+	}
+	setChild(secNode, "token", tokenNode)
+
+	allowNode, err := encodeNode(d.Allow)
+	if err != nil {
+		return nil, err
+	}
+	setChild(secNode, "allow", allowNode)
 
 	notifyNode, err := encodeNode(d.CatalogNotify)
 	if err != nil {

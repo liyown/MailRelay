@@ -25,6 +25,13 @@ type Message struct {
 	Attachments []Attachment
 }
 
+type Envelope struct {
+	MessageID string
+	Sender    string
+	Name      string
+	InReplyTo string
+}
+
 func parseErr(message string, err error) error {
 	return &command.Error{Kind: "parse", Message: message, Err: err}
 }
@@ -63,6 +70,10 @@ func Parse(r io.Reader) (Message, error) {
 		for k, v := range x {
 			params[k] = v
 		}
+	} else if looksLikeHTTPRequest(body) {
+		// http_request commands intentionally use the whole mail body as an
+		// RFC 7230-style request. Authentication for these mails must use the
+		// X-MailRelay-Token header because the body is no longer key=value.
 	} else {
 		s := bufio.NewScanner(strings.NewReader(string(body)))
 		for s.Scan() {
@@ -94,7 +105,48 @@ func Parse(r io.Reader) (Message, error) {
 	if d, err := m.Header.Date(); err == nil {
 		received = d
 	}
-	return Message{Request: command.Request{MessageID: id, Sender: strings.ToLower(addr.Address), Name: name, Params: params, Received: received, InReplyTo: m.Header.Get("Message-ID")}, Token: token, Attachments: atts}, nil
+	return Message{Request: command.Request{MessageID: id, Sender: strings.ToLower(addr.Address), Name: name, Params: params, RawBody: string(body), Received: received, InReplyTo: m.Header.Get("Message-ID")}, Token: token, Attachments: atts}, nil
+}
+
+func looksLikeHTTPRequest(body []byte) bool {
+	line, _, _ := strings.Cut(strings.TrimLeft(string(body), "\r\n\t "), "\n")
+	line = strings.TrimSpace(line)
+	parts := strings.Fields(line)
+	if len(parts) != 3 || !strings.HasPrefix(parts[2], "HTTP/") {
+		return false
+	}
+	switch parts[0] {
+	case "GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS":
+		return true
+	default:
+		return false
+	}
+}
+
+func ParseEnvelope(r io.Reader) (Envelope, error) {
+	m, err := mailstd.ReadMessage(r)
+	if err != nil {
+		return Envelope{}, parseErr("invalid message", err)
+	}
+	addr, err := mailstd.ParseAddress(m.Header.Get("From"))
+	if err != nil {
+		return Envelope{}, parseErr("invalid From", err)
+	}
+	subj, err := new(mime.WordDecoder).DecodeHeader(m.Header.Get("Subject"))
+	if err != nil {
+		return Envelope{}, parseErr("invalid Subject", err)
+	}
+	fields := strings.Fields(strings.TrimSpace(subj))
+	name := ""
+	if len(fields) > 0 {
+		name = strings.ToLower(fields[0])
+	}
+	id := strings.Trim(strings.TrimSpace(m.Header.Get("Message-ID")), "<>")
+	if id == "" {
+		sum := sha256.Sum256([]byte(strings.ToLower(addr.Address) + "\n" + subj))
+		id = "sha256:" + hex.EncodeToString(sum[:])
+	}
+	return Envelope{MessageID: id, Sender: strings.ToLower(addr.Address), Name: name, InReplyTo: m.Header.Get("Message-ID")}, nil
 }
 func readBody(m *mailstd.Message) ([]byte, []Attachment, string, error) {
 	ct := m.Header.Get("Content-Type")

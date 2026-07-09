@@ -420,8 +420,11 @@ func TestQueueFailureEventIsSafe(t *testing.T) {
 		t.Fatalf("events=%#v", events)
 	}
 	event := events[0]
-	if event.Phase != "queue" || event.Handler != "queue" || event.ErrorKind != "dependency" || event.Summary != "queue job failed" {
+	if event.Phase != "queue" || event.Handler != "queue" || event.ErrorKind != "dependency" || !strings.HasPrefix(event.Summary, "queue job failed:") {
 		t.Fatalf("event=%#v", event)
+	}
+	if !strings.Contains(event.Summary, "[email]") || !strings.Contains(event.Summary, "[REDACTED]") {
+		t.Fatalf("event should include sanitized detail=%#v", event)
 	}
 	if strings.Contains(event.Summary, "vip@example.com") || strings.Contains(event.Summary, "topsecret") {
 		t.Fatalf("unsafe event=%#v", event)

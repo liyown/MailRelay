@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/becomeopc/opc-mailrelay/internal/command"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,8 +30,13 @@ func (s *Shell) Execute(ctx context.Context, x command.Context) (command.Result,
 	cmd.Stdout = &limitedWriter{w: &out, n: 1 << 20}
 	cmd.Stderr = &limitedWriter{w: &out, n: 1 << 20}
 	if err = cmd.Run(); err != nil {
-		return command.Result{}, &command.Error{Kind: "dependency", Message: "process failed", Err: err}
+		sensitiveValues := commandSensitiveValues(x.Command, x.Request.Params)
+		detail := safeLogText(out.String(), sensitiveValues)
+		slog.Warn("shell process failed", "command", x.Command.Name, "message_id", x.Request.MessageID, "executable", exe, "args", safeStringSlice(args, sensitiveValues), "output", detail, "error", safeErrorText(err, nil))
+		return command.Result{}, &command.Error{Kind: "dependency", Message: "process failed", Err: fmt.Errorf("%w: %s", err, detail)}
 	}
+	sensitiveValues := commandSensitiveValues(x.Command, x.Request.Params)
+	slog.Info("shell process completed", "command", x.Command.Name, "message_id", x.Request.MessageID, "executable", exe, "args", safeStringSlice(args, sensitiveValues), "output", safeLogText(out.String(), sensitiveValues))
 	return command.Result{Status: "success", Summary: "Process completed", Body: out.String()}, nil
 }
 
@@ -53,15 +59,22 @@ func (p *Plugin) Execute(ctx context.Context, x command.Context) (command.Result
 	var stderr bytes.Buffer
 	cmd.Stderr = &limitedWriter{w: &stderr, n: 64 << 10}
 	if err = cmd.Run(); err != nil {
-		return command.Result{}, fmt.Errorf("plugin failed: %w", err)
+		sensitiveValues := commandSensitiveValues(x.Command, x.Request.Params)
+		detail := safeLogText(stderr.String(), sensitiveValues)
+		slog.Warn("plugin process failed", "command", x.Command.Name, "message_id", x.Request.MessageID, "executable", exe, "args", safeStringSlice(args, sensitiveValues), "stderr", detail, "error", safeErrorText(err, nil))
+		return command.Result{}, &command.Error{Kind: "dependency", Message: "plugin failed", Err: fmt.Errorf("%w: %s", err, detail)}
 	}
 	var res command.Result
 	if err = json.Unmarshal(out.Bytes(), &res); err != nil {
-		return command.Result{}, fmt.Errorf("invalid plugin result: %w", err)
+		sensitiveValues := commandSensitiveValues(x.Command, x.Request.Params)
+		slog.Warn("plugin returned invalid JSON", "command", x.Command.Name, "message_id", x.Request.MessageID, "executable", exe, "stdout", safeLogText(out.String(), sensitiveValues), "stderr", safeLogText(stderr.String(), sensitiveValues), "error", safeErrorText(err, nil))
+		return command.Result{}, &command.Error{Kind: "dependency", Message: "invalid plugin result", Err: err}
 	}
 	if res.Status == "" {
 		res.Status = "success"
 	}
+	sensitiveValues := commandSensitiveValues(x.Command, x.Request.Params)
+	slog.Info("plugin completed", "command", x.Command.Name, "message_id", x.Request.MessageID, "executable", exe, "status", res.Status, "summary", safeLogText(res.Summary, sensitiveValues))
 	return res, nil
 }
 func processConfig(x command.Context) (string, []string, string, []string, error) {

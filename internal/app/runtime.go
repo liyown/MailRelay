@@ -79,7 +79,7 @@ func buildRouter(cfg *config.Config, s *store.Store, custom []command.Handler) (
 	client := policy.HTTPClient(30 * time.Second)
 	queue := handler.NewQueue(s)
 	queue.SetRetryPolicy(cfg.Runtime.QueueMaxAttempts, cfg.Runtime.InitialBackoff, cfg.Runtime.MaxBackoff)
-	builtins := []command.Handler{handler.NewHTTP(client, policy), handler.NewWebhook(client, policy), handler.NewWorkflow(64, 8), handler.NewPlugin(), handler.NewShell(), handler.NewAgent(client), handler.NewMCP(client), queue}
+	builtins := []command.Handler{handler.NewHTTP(client, policy), handler.NewHTTPRequest(client, policy), handler.NewWebhook(client, policy), handler.NewWorkflow(64, 8), handler.NewPlugin(), handler.NewShell(), handler.NewAgent(client), handler.NewMCP(client), queue}
 	for _, h := range append(builtins, custom...) {
 		if err := reg.Register(h); err != nil {
 			return nil, nil, err
@@ -398,7 +398,7 @@ func (r *Runtime) applyConfig(ctx context.Context, cfg *config.Config, mtime tim
 // newRepository builds the console repository and remembers it so applyConfig
 // can refresh its command list on every reload/edit.
 func (r *Runtime) newRepository(commands []command.Command) *webconsole.Repository {
-	repo := webconsole.NewRepository(r.store, commands, time.Now())
+	repo := webconsole.NewRepository(r.store, commands, time.Now(), r.cfg.Mail.IMAP.Username)
 	r.mu.Lock()
 	r.repo = repo
 	r.mu.Unlock()

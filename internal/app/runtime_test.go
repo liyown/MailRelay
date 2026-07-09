@@ -223,11 +223,18 @@ commands:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 1 {
-		t.Fatalf("expected 1 reload event, got %#v", events)
+	var reloadEvent *store.RuntimeEvent
+	for i := range events {
+		if events[i].Phase == "reload" {
+			reloadEvent = &events[i]
+			break
+		}
 	}
-	if events[0].Phase != "reload" || events[0].Summary != "configuration reload rejected" {
-		t.Fatalf("unexpected runtime event: %#v", events[0])
+	if reloadEvent == nil {
+		t.Fatalf("expected reload event, got %#v", events)
+	}
+	if reloadEvent.Summary != "configuration reload rejected" {
+		t.Fatalf("unexpected runtime event: %#v", reloadEvent)
 	}
 }
 

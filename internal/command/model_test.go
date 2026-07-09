@@ -17,7 +17,7 @@ func TestValidateParams(t *testing.T) {
 }
 
 func TestHandlerMaturityStableCore(t *testing.T) {
-	for _, name := range []string{"http", "webhook", "workflow", "queue"} {
+	for _, name := range []string{"http", "http_request", "webhook", "workflow", "queue"} {
 		if got := HandlerMaturity(name); got != "Stable" {
 			t.Fatalf("HandlerMaturity(%q)=%q, want Stable", name, got)
 		}

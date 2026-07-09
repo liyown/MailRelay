@@ -28,6 +28,7 @@ type Request struct {
 	Sender    string
 	Name      string
 	Params    map[string]any
+	RawBody   string
 	Received  time.Time
 	InReplyTo string
 	Trace     []string
@@ -73,7 +74,7 @@ type Handler interface {
 
 func HandlerMaturity(name string) string {
 	switch name {
-	case "http", "webhook", "workflow", "queue":
+	case "http", "http_request", "webhook", "workflow", "queue":
 		return "Stable"
 	default:
 		return "Experimental"

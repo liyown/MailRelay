@@ -49,11 +49,19 @@ func (h *closeStoreHandler) Execute(context.Context, command.Context) (command.R
 	return command.Result{Status: "success", Summary: "done", Body: "ok"}, nil
 }
 
+type failingHandler struct{ err error }
+
+func (h *failingHandler) Name() string { return "failing" }
+func (h *failingHandler) Execute(context.Context, command.Context) (command.Result, error) {
+	return command.Result{}, h.err
+}
+
 type testSender struct {
-	n    int
-	body []byte
-	fail int
-	err  error
+	n      int
+	body   []byte
+	bodies [][]byte
+	fail   int
+	err    error
 }
 
 type batchReceiver struct {
@@ -71,6 +79,7 @@ func (r *batchReceiver) Idle(context.Context) error { return nil }
 func (s *testSender) Send(_ context.Context, _ string, b []byte) error {
 	s.n++
 	s.body = b
+	s.bodies = append(s.bodies, append([]byte(nil), b...))
 	if s.err != nil {
 		return s.err
 	}
@@ -191,13 +200,57 @@ func TestOnceRecordsMalformedMessagesAsParseFailed(t *testing.T) {
 			if got.State != store.MessageParseFailed || got.ErrorKind != "parse" {
 				t.Fatalf("unexpected malformed message state: %#v", got)
 			}
-			if h.calls != 1 || sender.n != 1 {
+			if h.calls != 1 || sender.n != 2 {
 				t.Fatalf("handler calls=%d sends=%d", h.calls, sender.n)
+			}
+			if !strings.Contains(string(sender.bodies[0]), "MailRelay command rejected") || !strings.Contains(string(sender.bodies[0]), "parse failed") {
+				t.Fatalf("parse failure reply missing safe reason:\n%s", sender.bodies)
 			}
 			if len(recv.seen) != 2 || recv.seen[0] != tt.uid || recv.seen[1] != 99 {
 				t.Fatalf("seen=%v", recv.seen)
 			}
+			exec, err := st.RecentExecution(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if exec.Status != "success" {
+				t.Fatalf("latest execution should be good message, got %#v", exec)
+			}
 		})
+	}
+}
+
+func TestOnceDoesNotReplyToSelfGeneratedParseFailure(t *testing.T) {
+	st, err := store.Open(t.TempDir() + "/self-parse.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	h := &testHandler{}
+	reg := handler.NewRegistry()
+	_ = reg.Register(h)
+	route, _ := router.New([]command.Command{{Name: "push", Handler: "test"}}, reg)
+	sender := &testSender{}
+	a := New(st, route, sender, "relay@example.com", []string{"me@example.com"}, "secret")
+	recv := &batchReceiver{msgs: []mailbox.RawMessage{
+		{UID: 26, Body: []byte("From: relay@example.com\r\nSubject: [MailRelay error] Command\r\nMessage-ID: <self-error>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nMailRelay command rejected\r\n\r\nYour command was not accepted: parse failed.\r\n")},
+	}}
+
+	if err := a.Once(context.Background(), recv, 100); err != nil {
+		t.Fatal(err)
+	}
+	if h.calls != 0 || sender.n != 0 {
+		t.Fatalf("handler calls=%d sends=%d", h.calls, sender.n)
+	}
+	if len(recv.seen) != 1 || recv.seen[0] != 26 {
+		t.Fatalf("seen=%v", recv.seen)
+	}
+	got, err := st.MessageState(context.Background(), "uid:26")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != store.MessageParseFailed || got.ErrorKind != "parse" {
+		t.Fatalf("unexpected self parse state: %#v", got)
 	}
 }
 
@@ -224,15 +277,113 @@ func TestOnceAuthFailureUsesMessageIDWithoutDeadUIDDuplicate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.State != store.MessageAuthFailed || got.ErrorKind != "authentication" {
+	if got.State != store.MessageAuthFailed || got.ErrorKind != "authentication" || got.ErrorSummary != "invalid token" {
 		t.Fatalf("unexpected auth failure state: %#v", got)
 	}
 	_, err = st.MessageState(context.Background(), "uid:7")
 	if !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("expected no uid dead record, err=%v", err)
 	}
-	if h.calls != 1 || sender.n != 1 {
+	if h.calls != 1 || sender.n != 2 {
 		t.Fatalf("handler calls=%d sends=%d", h.calls, sender.n)
+	}
+	if len(sender.bodies) < 1 || !strings.Contains(string(sender.bodies[0]), "MailRelay command rejected") || !strings.Contains(string(sender.bodies[0]), "invalid token") {
+		t.Fatalf("auth failure reply missing safe reason:\n%s", sender.bodies)
+	}
+	events, err := st.RecentEvents(context.Background(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawAuth bool
+	for _, event := range events {
+		if event.Phase == "auth" && event.ErrorKind == "authentication" && event.Summary == "invalid token" {
+			sawAuth = true
+		}
+		if strings.Contains(event.Summary, "wrong") {
+			t.Fatalf("raw token leaked into event: %#v", event)
+		}
+	}
+	if !sawAuth {
+		t.Fatalf("missing auth event: %#v", events)
+	}
+	exec, err := st.RecentExecution(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exec.MessageID != "auth-good" || exec.Status != "success" {
+		t.Fatalf("latest execution should be successful command, got %#v", exec)
+	}
+}
+
+func TestProcessAuthFailureRecordsExecutionAndReplies(t *testing.T) {
+	st, err := store.Open(t.TempDir() + "/auth-execution.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	reg := handler.NewRegistry()
+	_ = reg.Register(&testHandler{})
+	route, _ := router.New([]command.Command{{Name: "push", Handler: "test"}}, reg)
+	sender := &testSender{}
+	a := New(st, route, sender, "relay@example.com", []string{"me@example.com"}, "secret")
+	raw := "From: me@example.com\r\nSubject: push\r\nMessage-ID: <auth-execution>\r\nX-MailRelay-Token: wrong\r\n\r\n"
+
+	err = a.Process(context.Background(), io.NopCloser(strings.NewReader(raw)))
+	if err == nil {
+		t.Fatal("expected auth failure")
+	}
+	exec, err := st.RecentExecution(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exec.MessageID != "auth-execution" || exec.Command != "push" || exec.Handler != "auth" || exec.Status != "error" || exec.Error != "authentication" || exec.Summary != "invalid token" {
+		t.Fatalf("unexpected auth execution: %#v", exec)
+	}
+	if sender.n != 1 || !strings.Contains(string(sender.body), "invalid token") {
+		t.Fatalf("missing auth failure reply sends=%d body=%s", sender.n, sender.body)
+	}
+}
+
+func TestProcessHandlerFailureRecordsSanitizedDetail(t *testing.T) {
+	st, err := store.Open(t.TempDir() + "/handler-detail.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	reg := handler.NewRegistry()
+	rawErr := "dial tcp vip@example.com failed with token=topsecret"
+	_ = reg.Register(&failingHandler{err: &command.Error{Kind: "dependency", Message: "HTTP request failed", Err: errors.New(rawErr)}})
+	route, _ := router.New([]command.Command{{Name: "push", Handler: "failing"}}, reg)
+	sender := &testSender{}
+	a := New(st, route, sender, "relay@example.com", []string{"me@example.com"}, "secret")
+	raw := "From: me@example.com\r\nSubject: push\r\nMessage-ID: <handler-detail>\r\nX-MailRelay-Token: secret\r\n\r\n"
+
+	if err := a.Process(context.Background(), io.NopCloser(strings.NewReader(raw))); err != nil {
+		t.Fatal(err)
+	}
+
+	exec, err := st.RecentExecution(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exec.Status != "error" || exec.Error != "dependency" {
+		t.Fatalf("unexpected execution: %#v", exec)
+	}
+	if !strings.Contains(exec.Summary, "HTTP request failed") || !strings.Contains(exec.Summary, "[email]") || !strings.Contains(exec.Summary, "[REDACTED]") {
+		t.Fatalf("execution summary missing sanitized detail: %#v", exec)
+	}
+	if strings.Contains(exec.Summary, "vip@example.com") || strings.Contains(exec.Summary, "topsecret") {
+		t.Fatalf("raw detail leaked into execution summary: %#v", exec)
+	}
+	events, err := st.RecentEvents(context.Background(), 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) == 0 || !strings.Contains(events[0].Summary, "HTTP request failed") {
+		t.Fatalf("missing handler event detail: %#v", events)
+	}
+	if strings.Contains(events[0].Summary, "vip@example.com") || strings.Contains(events[0].Summary, "topsecret") {
+		t.Fatalf("raw detail leaked into runtime event: %#v", events[0])
 	}
 }
 
@@ -519,8 +670,11 @@ func TestRunOneReplyRedactsStoredSMTPFailure(t *testing.T) {
 	if len(events) == 0 {
 		t.Fatal("expected runtime event")
 	}
-	if events[0].Phase != "reply" || events[0].ErrorKind != "dependency" || events[0].Summary != "reply delivery failed" {
+	if events[0].Phase != "reply" || events[0].ErrorKind != "dependency" || !strings.HasPrefix(events[0].Summary, "reply delivery failed:") {
 		t.Fatalf("unexpected runtime event: %#v", events[0])
+	}
+	if !strings.Contains(events[0].Summary, "550 rcpt") || !strings.Contains(events[0].Summary, "[REDACTED]") {
+		t.Fatalf("runtime event should include sanitized SMTP detail: %#v", events[0])
 	}
 	if strings.Contains(events[0].Summary, "vip@example.com") || strings.Contains(events[0].Summary, "topsecret") {
 		t.Fatalf("raw SMTP data leaked into runtime event: %#v", events[0])

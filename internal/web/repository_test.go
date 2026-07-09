@@ -21,7 +21,7 @@ func seededRepository(t *testing.T) *Repository {
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	ctx := context.Background()
-	base := time.Date(2026, 7, 8, 8, 0, 0, 0, time.UTC)
+	base := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Minute)
 	for i := 0; i < 3; i++ {
 		_, err = s.AddExecution(ctx, store.Execution{MessageID: fmt.Sprintf("message-%d", i), Command: "notify", Handler: "http", Status: []string{"success", "error", "success"}[i], Summary: "safe summary", Error: "dependency", StartedAt: base.Add(time.Duration(i) * time.Minute), Duration: time.Duration(i+1) * time.Second}, map[string]any{"token": "[redacted]"})
 		if err != nil {
@@ -31,7 +31,7 @@ func seededRepository(t *testing.T) *Repository {
 	_, _ = s.Enqueue(ctx, "notify", map[string]any{"api_key": "topsecret"}, "job-1", 3, base)
 	_ = s.AddEvent(ctx, store.RuntimeEvent{At: base, Severity: "error", Phase: "handler", Command: "notify", Handler: "http", ErrorKind: "dependency", Summary: "handler failed"})
 	commands := []command.Command{{Name: "notify", Description: "Send notification", Handler: "http", Parameters: map[string]command.Parameter{"message": {Type: "string"}}, Config: map[string]any{"url": "https://example.test/hook", "api_key": "topsecret"}}}
-	return NewRepository(s, commands, base.Add(-time.Hour))
+	return NewRepository(s, commands, base.Add(-time.Hour), "")
 }
 
 func TestRepositoryExecutionPaginationIsStable(t *testing.T) {

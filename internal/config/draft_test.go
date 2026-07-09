@@ -55,6 +55,8 @@ func TestRenderDraftReplacesOnlyEditableSectionsAndPreservesSecrets(t *testing.T
 		},
 		HTTPHosts:     []string{"api.example.com", "hooks.example.com"},
 		CatalogNotify: []string{"ops@qq.com"},
+		Token:         "topsecret-token",        // preserve original token
+		Allow:         []string{"u@qq.com"},      // preserve original allow
 	}
 	out, err := RenderDraft([]byte(draftOriginal), draft)
 	if err != nil {
@@ -94,7 +96,12 @@ func TestRenderDraftCreatesMissingRuntimeSection(t *testing.T) {
 	original := `security: {token: t, allow: [a@b.c]}
 storage: {path: x.db}
 `
-	out, err := RenderDraft([]byte(original), Draft{CatalogNotify: []string{"a@b.c"}, HTTPHosts: []string{}})
+	out, err := RenderDraft([]byte(original), Draft{
+		CatalogNotify: []string{"a@b.c"},
+		HTTPHosts:     []string{},
+		Token:         "t",
+		Allow:         []string{"a@b.c"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

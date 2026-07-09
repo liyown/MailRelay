@@ -91,4 +91,9 @@ type SystemInfo struct {
 	StartedAt    time.Time `json:"started_at"`
 	UptimeSecond int64     `json:"uptime_seconds"`
 	CommandCount int       `json:"command_count"`
+	Version      string    `json:"version"`
+	Commit       string    `json:"commit"`
+	BuildTime    string    `json:"build_time"`
+	GoVersion    string    `json:"go_version"`
+	InboxAddress string    `json:"inbox_address"`
 }

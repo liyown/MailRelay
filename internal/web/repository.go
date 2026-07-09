@@ -4,20 +4,23 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"runtime"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/becomeopc/opc-mailrelay/internal/command"
 	"github.com/becomeopc/opc-mailrelay/internal/store"
+	"github.com/becomeopc/opc-mailrelay/internal/version"
 )
 
 type Repository struct {
-	store     *store.Store
-	mu        sync.RWMutex
-	commands  []command.Command
-	startedAt time.Time
-	now       func() time.Time
+	store        *store.Store
+	mu           sync.RWMutex
+	commands     []command.Command
+	startedAt    time.Time
+	inboxAddress string
+	now          func() time.Time
 }
 
 type ExecutionFilter struct {
@@ -37,8 +40,8 @@ type EventFilter struct {
 	Limit            int
 }
 
-func NewRepository(s *store.Store, commands []command.Command, startedAt time.Time) *Repository {
-	return &Repository{store: s, commands: append([]command.Command(nil), commands...), startedAt: startedAt, now: time.Now}
+func NewRepository(s *store.Store, commands []command.Command, startedAt time.Time, inboxAddress string) *Repository {
+	return &Repository{store: s, commands: append([]command.Command(nil), commands...), startedAt: startedAt, inboxAddress: inboxAddress, now: time.Now}
 }
 
 func clampLimit(limit int) int {
@@ -169,7 +172,16 @@ func (r *Repository) System() SystemInfo {
 	r.mu.RLock()
 	count := len(r.commands)
 	r.mu.RUnlock()
-	return SystemInfo{StartedAt: r.startedAt, UptimeSecond: int64(r.now().Sub(r.startedAt).Seconds()), CommandCount: count}
+	return SystemInfo{
+		StartedAt:    r.startedAt,
+		UptimeSecond: int64(r.now().Sub(r.startedAt).Seconds()),
+		CommandCount: count,
+		Version:      version.Version,
+		Commit:       version.Commit,
+		BuildTime:    version.BuildTime,
+		GoVersion:    runtime.Version(),
+		InboxAddress: r.inboxAddress,
+	}
 }
 
 // ReplayJob re-queues a dead queue job so the worker retries it. Idempotent at
