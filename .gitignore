@@ -13,3 +13,14 @@ docs-site/.next/
 docs-site/.source/
 docs-site/out/
 docs-site/tsconfig.tsbuildinfo
+
+# build output
+mailrelay
+console/dist/
+
+# dependency caches
+.pnpm-store/
+console/node_modules/
+
+# AI workflow artifacts
+.superpowers/
