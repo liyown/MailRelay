@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/becomeopc/opc-mailrelay/internal/command"
@@ -13,6 +14,7 @@ import (
 
 type Repository struct {
 	store     *store.Store
+	mu        sync.RWMutex
 	commands  []command.Command
 	startedAt time.Time
 	now       func() time.Time
@@ -144,6 +146,8 @@ func (r *Repository) Events(ctx context.Context, filter EventFilter) (Page[Event
 }
 
 func (r *Repository) Commands() []CommandItem {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	items := make([]CommandItem, 0, len(r.commands))
 	for _, c := range r.commands {
 		items = append(items, CommandItem{Name: c.Name, Description: c.Description, Handler: c.Handler, Maturity: command.HandlerMaturity(c.Handler), ParameterCount: len(c.Parameters)})
@@ -151,8 +155,32 @@ func (r *Repository) Commands() []CommandItem {
 	return items
 }
 
+// SetCommands atomically swaps the command snapshot the console displays. The
+// runtime calls this after every successful config reload or console edit so the
+// read views (and command count) reflect the live catalog instead of the
+// startup snapshot.
+func (r *Repository) SetCommands(commands []command.Command) {
+	r.mu.Lock()
+	r.commands = append([]command.Command(nil), commands...)
+	r.mu.Unlock()
+}
+
 func (r *Repository) System() SystemInfo {
-	return SystemInfo{StartedAt: r.startedAt, UptimeSecond: int64(r.now().Sub(r.startedAt).Seconds()), CommandCount: len(r.commands)}
+	r.mu.RLock()
+	count := len(r.commands)
+	r.mu.RUnlock()
+	return SystemInfo{StartedAt: r.startedAt, UptimeSecond: int64(r.now().Sub(r.startedAt).Seconds()), CommandCount: count}
+}
+
+// ReplayJob re-queues a dead queue job so the worker retries it. Idempotent at
+// the store level: only rows in the dead state are affected.
+func (r *Repository) ReplayJob(ctx context.Context, id int64) error {
+	return r.store.ReplayJob(ctx, id)
+}
+
+// ReplayReply re-queues a dead SMTP reply for delivery.
+func (r *Repository) ReplayReply(ctx context.Context, id int64) error {
+	return r.store.ReplayReply(ctx, id)
 }
 
 func (r *Repository) Dashboard(ctx context.Context, rangeKey string) (Dashboard, error) {
@@ -172,7 +200,15 @@ func (r *Repository) Dashboard(ctx context.Context, rangeKey string) (Dashboard,
 	if err != nil {
 		return Dashboard{}, err
 	}
-	result := Dashboard{Range: rangeKey, ExecutionCount: counts.Executions, SuccessCount: counts.Success, ActiveHandlers: counts.ActiveHandlers, Queue: WorkCounts{Pending: counts.QueuePending, Running: counts.QueueRunning, Dead: counts.QueueDead}, Replies: WorkCounts{Pending: counts.ReplyPending, Running: counts.ReplyRunning, Dead: counts.ReplyDead}, RecentExecutions: executions.Items, RecentEvents: events.Items}
+	series, err := r.store.ConsoleSeriesSince(ctx, r.now().Add(-duration), 24)
+	if err != nil {
+		return Dashboard{}, err
+	}
+	points := make([]SeriesPoint, 0, len(series))
+	for _, p := range series {
+		points = append(points, SeriesPoint{At: p.BucketStart, Count: p.Count, Success: p.Success})
+	}
+	result := Dashboard{Range: rangeKey, ExecutionCount: counts.Executions, SuccessCount: counts.Success, ActiveHandlers: counts.ActiveHandlers, Queue: WorkCounts{Pending: counts.QueuePending, Running: counts.QueueRunning, Dead: counts.QueueDead}, Replies: WorkCounts{Pending: counts.ReplyPending, Running: counts.ReplyRunning, Dead: counts.ReplyDead}, Series: points, RecentExecutions: executions.Items, RecentEvents: events.Items}
 	if counts.Executions > 0 {
 		result.SuccessRate = float64(counts.Success) / float64(counts.Executions) * 100
 	}

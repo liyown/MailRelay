@@ -3,6 +3,8 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"github.com/becomeopc/opc-mailrelay/internal/command"
@@ -11,6 +13,8 @@ import (
 	"github.com/becomeopc/opc-mailrelay/internal/store"
 	webconsole "github.com/becomeopc/opc-mailrelay/internal/web"
 	"io"
+	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -439,5 +443,79 @@ func TestWorkflowPartialFailureLifecycle(t *testing.T) {
 	}
 	if strings.Join(exec.names, ",") != "build,deploy" {
 		t.Fatalf("executed=%v", exec.names)
+	}
+}
+
+func TestMailConnectionError(t *testing.T) {
+	cases := []struct {
+		name      string
+		err       error
+		wantCause string
+	}{
+		{"dns", &net.DNSError{Name: "me@example.com", Err: "no such host"}, "dns"},
+		{"timeout", &net.OpError{Op: "dial", Err: timeoutErr{}}, "timeout"},
+		{"connect", &net.OpError{Op: "dial", Err: errors.New("connection refused")}, "connect"},
+		{"tls", tls.RecordHeaderError{Msg: "first record does not look like a TLS handshake"}, "tls"},
+		{"certificate", x509.UnknownAuthorityError{}, "certificate"},
+		{"auth", errors.New("LOGIN failed: authentication error"), "auth"},
+		{"unknown", errors.New("something unexpected"), "unknown"},
+		{"nil", nil, "none"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cause, hint := mailConnectionError(tc.err)
+			if cause != tc.wantCause {
+				t.Fatalf("cause=%q want %q", cause, tc.wantCause)
+			}
+			if tc.err != nil && hint == "" {
+				t.Fatal("expected a hint for a non-nil error")
+			}
+		})
+	}
+}
+
+type timeoutErr struct{}
+
+func (timeoutErr) Error() string   { return "i/o timeout" }
+func (timeoutErr) Timeout() bool   { return true }
+func (timeoutErr) Temporary() bool { return true }
+
+func TestRunReceiverFailureLogIsActionableAndScrubbed(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	defer slog.SetDefault(prev)
+
+	d := t.TempDir()
+	path := filepath.Join(d, "mailrelay.yaml")
+	body := `mail:
+  imap: {address: "imap.example.com:993", username: u, password: p}
+  smtp: {address: "smtp.example.com:465", username: u, password: p, from: relay@example.com}
+security: {token: secret, allow: [me@example.com], http_hosts: [api.example.com]}
+storage: {path: relay.db}
+runtime: {command_timeout: 1s, config_reload: true}
+commands: []
+`
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Build(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	r.receiver = &cancelOnFetchReceiver{err: errors.New("imap login failed for vip@example.com token=topsecret"), cancel: cancel}
+	if err := r.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	logged := buf.String()
+	if strings.Contains(logged, "topsecret") || strings.Contains(logged, "vip@example.com") {
+		t.Fatalf("raw receiver error leaked into operator log: %q", logged)
+	}
+	for _, want := range []string{"mailrelay started", "mail poll failed", "cause=auth", "hint="} {
+		if !strings.Contains(logged, want) {
+			t.Fatalf("log missing %q; got %q", want, logged)
+		}
 	}
 }

@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -21,11 +24,13 @@ import (
 	"github.com/becomeopc/opc-mailrelay/internal/router"
 	"github.com/becomeopc/opc-mailrelay/internal/security"
 	"github.com/becomeopc/opc-mailrelay/internal/store"
+	"github.com/becomeopc/opc-mailrelay/internal/version"
 	webconsole "github.com/becomeopc/opc-mailrelay/internal/web"
 )
 
 type Runtime struct {
 	mu         sync.RWMutex
+	reloadMu   sync.Mutex
 	path       string
 	cfg        *config.Config
 	store      *store.Store
@@ -36,6 +41,7 @@ type Runtime struct {
 	custom     []command.Handler
 	mtime      time.Time
 	webAddress string
+	repo       *webconsole.Repository
 }
 
 func Build(path string, custom ...command.Handler) (*Runtime, error) {
@@ -132,6 +138,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 	webConfig := r.cfg.Web
 	commands := append([]command.Command(nil), r.cfg.Commands...)
 	r.mu.RUnlock()
+	r.logStartup()
 	if !webConfig.Enabled {
 		return r.runMail(ctx)
 	}
@@ -151,6 +158,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 	r.mu.Lock()
 	r.webAddress = listener.Addr().String()
 	r.mu.Unlock()
+	slog.Info("web console listening", "url", consoleURL(webConfig, listener.Addr().String()))
 	defer func() {
 		r.mu.Lock()
 		r.webAddress = ""
@@ -158,7 +166,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 	}()
 
 	server := &http.Server{
-		Handler:           webconsole.NewServer(webconsole.ServerOptions{Sessions: sessions, Repository: webconsole.NewRepository(r.store, commands, time.Now())}),
+		Handler:           webconsole.NewServer(webconsole.ServerOptions{Sessions: sessions, Repository: r.newRepository(commands), Editor: r}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -202,9 +210,19 @@ func (r *Runtime) runMail(ctx context.Context) error {
 			slog.Error("configuration reload rejected", "error", err)
 		}
 		if err := r.Once(ctx); err != nil {
+			r.mu.RLock()
+			imapAddr := r.cfg.Mail.IMAP.Address
+			r.mu.RUnlock()
+			cause, hint := mailConnectionError(err)
 			_ = r.store.AddEvent(context.Background(), store.RuntimeEvent{Severity: "error", Phase: "receiver", ErrorKind: "dependency", Summary: runtimeEventSummary("receiver")})
 			_ = r.store.SetState(context.Background(), "last_runtime_error", runtimeEventSummary("receiver"))
-			slog.Error("mail poll failed", "error", runtimeEventSummary("receiver"))
+			slog.Error("mail poll failed",
+				"cause", cause,
+				"imap", imapAddr,
+				"error_type", fmt.Sprintf("%T", err),
+				"retry_in", backoff.String(),
+				"hint", hint,
+			)
 			select {
 			case <-ctx.Done():
 				return nil
@@ -227,10 +245,92 @@ func (r *Runtime) runMail(ctx context.Context) error {
 			return nil
 		}
 		if err != nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-			slog.Warn("IMAP IDLE unavailable; polling fallback active", "error", err)
+			cause, _ := mailConnectionError(err)
+			slog.Warn("IMAP IDLE unavailable; polling fallback active", "cause", cause)
 		}
 	}
 }
+
+// logStartup emits a one-line operator banner so it is obvious which endpoints,
+// storage, and command set the process came up with. Only host:port addresses
+// are logged — never usernames, passwords, or tokens.
+func (r *Runtime) logStartup() {
+	r.mu.RLock()
+	cfg := r.cfg
+	r.mu.RUnlock()
+	slog.Info("mailrelay started",
+		"version", version.String(),
+		"config", r.path,
+		"imap", cfg.Mail.IMAP.Address,
+		"smtp", cfg.Mail.SMTP.Address,
+		"poll_interval", cfg.Mail.IMAP.PollInterval.String(),
+		"storage", cfg.Storage.Path,
+		"commands", len(cfg.Commands),
+		"web", cfg.Web.Enabled,
+	)
+}
+
+// consoleURL is the address an operator should open to reach the web console.
+// It prefers the configured public URL and otherwise builds one from the bound
+// listen address (which may differ from the config when a :0 port is used).
+func consoleURL(w config.Web, bound string) string {
+	if w.PublicURL != "" {
+		return w.PublicURL
+	}
+	if bound == "" {
+		bound = w.Address
+	}
+	return "http://" + bound
+}
+
+// mailConnectionError classifies a receiver failure into a stable cause label
+// and an actionable operator hint. It inspects error types and only matches
+// against fixed substrings — it never returns any part of the raw error, which
+// may carry credentials or recipient addresses that must stay out of logs.
+func mailConnectionError(err error) (cause, hint string) {
+	if err == nil {
+		return "none", ""
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return "dns", "the mail 'address' host could not be resolved — it must be your provider's server host:port (e.g. imap.qq.com:993 / smtp.qq.com:465), not your email account"
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return "timeout", "connecting to the mail server timed out — check the address, port, and that outbound access is allowed"
+	}
+	var recordErr tls.RecordHeaderError
+	if errors.As(err, &recordErr) {
+		return "tls", "the TLS handshake failed — this port may expect STARTTLS or plaintext; use an implicit-TLS port (993 for IMAP, 465 for SMTP)"
+	}
+	var authorityErr x509.UnknownAuthorityError
+	var hostnameErr x509.HostnameError
+	var certErr x509.CertificateInvalidError
+	if errors.As(err, &authorityErr) || errors.As(err, &hostnameErr) || errors.As(err, &certErr) {
+		return "certificate", "the mail server TLS certificate could not be verified — confirm the 'address' host matches the server certificate"
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return "connect", "could not reach the mail server — verify the address and port are correct and reachable"
+	}
+	switch msg := strings.ToLower(err.Error()); {
+	case strings.Contains(msg, "no such host"), strings.Contains(msg, "server misbehaving"):
+		return "dns", "the mail 'address' host could not be resolved — it must be your provider's server host:port, not your email account"
+	case strings.Contains(msg, "timeout"), strings.Contains(msg, "deadline exceeded"):
+		return "timeout", "connecting to the mail server timed out — check the address, port, and that outbound access is allowed"
+	case strings.Contains(msg, "refused"), strings.Contains(msg, "unreachable"), strings.Contains(msg, "reset"):
+		return "connect", "the mail server could not be reached — check the address and port are correct and reachable"
+	case strings.Contains(msg, "certificate"), strings.Contains(msg, "x509"):
+		return "certificate", "the mail server TLS certificate could not be verified — confirm the 'address' host matches the server certificate"
+	case strings.Contains(msg, "handshake"), msg == "eof", strings.Contains(msg, "tls"):
+		return "tls", "the server closed the TLS connection — confirm 'address' is your provider's mail server host:port over implicit TLS (993 for IMAP, 465 for SMTP), not a plain email address or a STARTTLS-only port"
+	case strings.Contains(msg, "login"), strings.Contains(msg, "authenticate"), strings.Contains(msg, "credential"), strings.Contains(msg, "password"):
+		return "auth", "the mail server rejected the login — verify the username and password (many providers require an app-specific password / authorization code and IMAP/SMTP to be enabled)"
+	default:
+		return "unknown", "verify the IMAP/SMTP address, credentials, and network; run 'mailrelay doctor' to check configuration"
+	}
+}
+
 func (r *Runtime) reloadIfChanged(ctx context.Context) error {
 	r.mu.RLock()
 	reload := r.cfg.Runtime.ConfigReload
@@ -238,11 +338,16 @@ func (r *Runtime) reloadIfChanged(ctx context.Context) error {
 	if !reload {
 		return nil
 	}
+	r.reloadMu.Lock()
+	defer r.reloadMu.Unlock()
 	st, err := os.Stat(r.path)
 	if err != nil {
 		return err
 	}
-	if !st.ModTime().After(r.mtime) {
+	r.mu.RLock()
+	current := r.mtime
+	r.mu.RUnlock()
+	if !st.ModTime().After(current) {
 		return nil
 	}
 	cfg, err := config.Load(r.path)
@@ -250,6 +355,14 @@ func (r *Runtime) reloadIfChanged(ctx context.Context) error {
 		_ = r.store.AddEvent(ctx, store.RuntimeEvent{Severity: "error", Phase: "reload", ErrorKind: "config", Summary: runtimeEventSummary("reload")})
 		return err
 	}
+	return r.applyConfig(ctx, cfg, st.ModTime())
+}
+
+// applyConfig rebuilds the router from an already-validated config and swaps it,
+// the mail clients, and the security settings in atomically, then refreshes the
+// console's command snapshot. Shared by mtime-driven reloads and console edits;
+// callers hold reloadMu so the two paths never interleave.
+func (r *Runtime) applyConfig(ctx context.Context, cfg *config.Config, mtime time.Time) error {
 	reg, route, err := buildRouter(cfg, r.store, r.custom)
 	if err != nil {
 		_ = r.store.AddEvent(ctx, store.RuntimeEvent{Severity: "error", Phase: "reload", ErrorKind: "config", Summary: runtimeEventSummary("reload")})
@@ -273,10 +386,79 @@ func (r *Runtime) reloadIfChanged(ctx context.Context) error {
 	r.app.ReplaceRouter(route)
 	r.app.ReplaceSecurity(cfg.Mail.SMTP.From, cfg.Security.Allow, cfg.Security.Token)
 	r.app.SetRetryPolicy(cfg.Runtime.ReplyMaxAttempts, cfg.Runtime.InitialBackoff, cfg.Runtime.MaxBackoff)
-	r.mtime = st.ModTime()
+	r.mtime = mtime
+	repo := r.repo
 	r.mu.Unlock()
+	if repo != nil {
+		repo.SetCommands(cfg.Commands)
+	}
 	return nil
 }
+
+// newRepository builds the console repository and remembers it so applyConfig
+// can refresh its command list on every reload/edit.
+func (r *Runtime) newRepository(commands []command.Command) *webconsole.Repository {
+	repo := webconsole.NewRepository(r.store, commands, time.Now())
+	r.mu.Lock()
+	r.repo = repo
+	r.mu.Unlock()
+	return repo
+}
+
+// LoadDraft returns the console-editable slice of configuration with ${VAR}
+// tokens intact. Implements webconsole.Editor.
+func (r *Runtime) LoadDraft() (config.Draft, error) {
+	return config.LoadDraft(r.path)
+}
+
+// ApplyDraft validates a console edit against the FULL config, persists it with
+// a surgical node-level rewrite (preserving mail credentials, tokens, the
+// session secret, ${VAR} refs, and comments), then hot-applies it. Invalid
+// drafts return a *webconsole.DraftError and never touch the on-disk file.
+// Implements webconsole.Editor.
+func (r *Runtime) ApplyDraft(ctx context.Context, draft config.Draft) error {
+	r.reloadMu.Lock()
+	defer r.reloadMu.Unlock()
+
+	original, err := os.ReadFile(r.path)
+	if err != nil {
+		return err
+	}
+	rendered, err := config.RenderDraft(original, draft)
+	if err != nil {
+		return &webconsole.DraftError{Message: "unable to render configuration: " + err.Error()}
+	}
+
+	// Validate against a temp copy in the same directory so relative paths and
+	// ${VAR} resolution match the real file. Only rename over the live config
+	// once config.Load (parse + full Validate) accepts it.
+	tmp, err := os.CreateTemp(filepath.Dir(r.path), ".mailrelay-draft-*.yaml")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err = tmp.Write(rendered); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err = tmp.Close(); err != nil {
+		return err
+	}
+	cfg, err := config.Load(tmpPath)
+	if err != nil {
+		return &webconsole.DraftError{Message: "invalid configuration: " + err.Error()}
+	}
+	if err = os.Rename(tmpPath, r.path); err != nil {
+		return err
+	}
+	st, err := os.Stat(r.path)
+	if err != nil {
+		return err
+	}
+	return r.applyConfig(ctx, cfg, st.ModTime())
+}
+
 func (r *Runtime) updateCatalog(ctx context.Context, oldHint, newCmds []command.Command) error {
 	raw, hash := catalog.Build(newCmds)
 	oldHash, oldRaw, _, err := r.store.Catalog(ctx)
