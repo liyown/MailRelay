@@ -47,6 +47,8 @@ export type ConfigDraft = {
   commands: CommandDetail[];
   http_hosts: string[];
   catalog_notify: string[];
+  token: string;
+  allow: string[];
 };
 
 export type Job = {
@@ -99,4 +101,13 @@ export type Dashboard = {
   recent_events: EventItem[];
 };
 
-export type SystemInfo = { started_at: string; uptime_seconds: number; command_count: number };
+export type SystemInfo = {
+  started_at: string;
+  uptime_seconds: number;
+  command_count: number;
+  version: string;
+  commit: string;
+  build_time: string;
+  go_version: string;
+  inbox_address: string;
+};

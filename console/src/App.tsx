@@ -10,7 +10,7 @@ export function App() {
       <div className="grid min-h-screen place-items-center">
         <div className="text-center">
           <Logo />
-          <p className="text-sm text-muted-foreground">正在连接运行控制台...</p>
+          <p className="text-sm text-muted-foreground">正在连接运行控制台....</p>
         </div>
       </div>
     );

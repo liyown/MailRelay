@@ -29,7 +29,7 @@ describe("api", () => {
   it("saves the config draft with a PUT carrying JSON and the CSRF token", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: "ok" }), { status: 200, headers: { "Content-Type": "application/json" } }));
     vi.stubGlobal("fetch", fetchMock);
-    const draft = { commands: [{ name: "deploy", handler: "http" }], http_hosts: ["api.example.com"], catalog_notify: [] };
+    const draft = { commands: [{ name: "deploy", handler: "http" }], http_hosts: ["api.example.com"], catalog_notify: [], token: "test-token", allow: ["user@example.com"] };
     await expect(api.saveConfig(draft, "csrf-token")).resolves.toEqual({ status: "ok" });
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("/api/v1/config/draft");
@@ -39,7 +39,7 @@ describe("api", () => {
 
   it("carries field-level validation errors on APIError", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: { code: "invalid_config", message: "bad", fields: { name: "required" } } }), { status: 422, headers: { "Content-Type": "application/json" } })));
-    await expect(api.saveConfig({ commands: [], http_hosts: [], catalog_notify: [] }, "t")).rejects.toMatchObject({ status: 422, code: "invalid_config", fields: { name: "required" } });
+    await expect(api.saveConfig({ commands: [], http_hosts: [], catalog_notify: [], token: "", allow: [] }, "t")).rejects.toMatchObject({ status: 422, code: "invalid_config", fields: { name: "required" } });
   });
 
   it("encodes pagination cursors and filters into the query string", async () => {

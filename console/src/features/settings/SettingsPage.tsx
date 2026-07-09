@@ -1,69 +1,111 @@
-import { CheckCircle, ShieldCheck } from "@phosphor-icons/react";
+import { CheckCircle, GitBranch, HardDrive, Lightning, ShieldCheck, Timer } from "@phosphor-icons/react";
 import { CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { PageFrame } from "@/components/layout/PageFrame";
 import { Panel, PanelTitle } from "@/components/common/Panel";
-import { useSystem } from "@/hooks/queries";
-import { formatDateTime, formatUptime } from "@/lib/format";
+import { useSystem, useDashboard } from "@/hooks/queries";
+import { formatDateTime, formatUptime, formatSeconds } from "@/lib/format";
 
-function Field({ label, value }: { label: string; value: string }) {
+function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <label className="grid gap-2 text-sm font-medium">
-      <span>{label}</span>
-      <Input value={value} readOnly className="bg-muted/40" />
-    </label>
+    <div className="flex items-center justify-between gap-4 border-b border-border/60 py-3 text-sm last:border-0">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="font-mono text-xs text-right">{value ?? "—"}</span>
+    </div>
   );
 }
 
-const SECURITY_NOTES = [
-  "邮箱凭据与授权码不会通过控制台 API 返回",
-  "Command Token 与处理器密钥保持服务端隔离",
-  "邮件正文和原始依赖错误不会进入可见日志",
-  "运维写操作（重放死信）需要有效会话与 CSRF 令牌",
+const SECURITY_STATUS = [
+  "签名会话已启用",
+  "CSRF 防护已启用",
+  "敏感字段默认脱敏",
+  "API 响应禁止缓存",
+  "邮箱凭据不经控制台 API 返回",
+  "Command Token 保持服务端隔离",
 ];
 
-const SECURITY_STATUS = ["签名会话已启用", "CSRF 防护已启用", "敏感字段默认脱敏", "API 响应禁止缓存"];
-
-export function SettingsPage({ security = false }: { security?: boolean }) {
+export function SettingsPage() {
   const system = useSystem();
+  const dashboard = useDashboard("24h");
+  const s = system.data;
+  const d = dashboard.data;
+
   return (
-    <PageFrame
-      title={security ? "邮箱与安全" : "系统设置"}
-      description={security ? "连接状态、信任边界与敏感配置" : "控制台与运行环境信息（只读）"}
-    >
-      <div className="grid gap-4 xl:grid-cols-[1fr_340px]">
-        <Panel>
-          <PanelTitle>{security ? "安全边界" : "运行信息"}</PanelTitle>
-          <CardContent className="space-y-5 p-5">
-            {security ? (
-              <div className="space-y-4">
-                {SECURITY_NOTES.map((note) => (
-                  <div key={note} className="flex items-start gap-3 rounded-lg border border-border p-4 text-sm">
-                    <ShieldCheck className="mt-0.5 size-5 shrink-0 text-emerald-600" />
-                    {note}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <>
-                <Field label="启动时间" value={system.data ? formatDateTime(system.data.started_at) : "—"} />
-                <Field label="运行时长" value={system.data ? formatUptime(system.data.uptime_seconds) : "—"} />
-                <Field label="已声明 Command" value={String(system.data?.command_count ?? "—")} />
-              </>
-            )}
-          </CardContent>
-        </Panel>
-        <Panel className="h-fit">
-          <PanelTitle>安全状态</PanelTitle>
-          <CardContent className="space-y-4 p-5">
-            {SECURITY_STATUS.map((status) => (
-              <div key={status} className="flex items-center gap-2 text-sm">
-                <CheckCircle weight="fill" className="text-emerald-600" />
-                {status}
-              </div>
-            ))}
-          </CardContent>
-        </Panel>
+    <PageFrame title="系统设置" description="运行环境、构建信息与安全状态（只读）">
+      <div className="grid gap-4 xl:grid-cols-[1fr_320px]">
+        <div className="space-y-4">
+          {/* Runtime */}
+          <Panel>
+            <PanelTitle><Timer className="size-4 text-muted-foreground" />运行状态</PanelTitle>
+            <CardContent className="px-5 pb-5 pt-0">
+              <Row label="启动时间" value={formatDateTime(s?.started_at)} />
+              <Row label="运行时长" value={s ? formatUptime(s.uptime_seconds) : undefined} />
+              <Row label="已声明 Command" value={s?.command_count ?? "—"} />
+              <Row label="活跃处理器" value={d?.active_handlers ?? "—"} />
+            </CardContent>
+          </Panel>
+
+          {/* Execution stats */}
+          <Panel>
+            <PanelTitle><Lightning className="size-4 text-muted-foreground" />执行统计（近 24h）</PanelTitle>
+            <CardContent className="px-5 pb-5 pt-0">
+              <Row label="总执行次数" value={d?.execution_count ?? "—"} />
+              <Row label="成功次数" value={d?.success_count ?? "—"} />
+              <Row
+                label="成功率"
+                value={
+                  d ? (
+                    <span className={d.success_rate >= 0.9 ? "text-emerald-600" : "text-destructive"}>
+                      {(d.success_rate * 100).toFixed(1)}%
+                    </span>
+                  ) : undefined
+                }
+              />
+              <Row label="P95 响应时长" value={d ? formatSeconds(d.p95_duration_ms) : undefined} />
+              <Row
+                label="Queue 待处理"
+                value={d ? `${d.queue.pending} 个 · 死信 ${d.queue.dead}` : undefined}
+              />
+              <Row
+                label="Reply 待处理"
+                value={d ? `${d.replies.pending} 个 · 死信 ${d.replies.dead}` : undefined}
+              />
+            </CardContent>
+          </Panel>
+
+          {/* Build info */}
+          <Panel>
+            <PanelTitle><GitBranch className="size-4 text-muted-foreground" />构建信息</PanelTitle>
+            <CardContent className="px-5 pb-5 pt-0">
+              <Row label="版本" value={s?.version} />
+              <Row label="Commit" value={s?.commit} />
+              <Row label="构建时间" value={s?.build_time} />
+              <Row label="Go 版本" value={s?.go_version} />
+            </CardContent>
+          </Panel>
+        </div>
+
+        {/* Security status sidebar */}
+        <div className="space-y-4">
+          <Panel>
+            <PanelTitle><ShieldCheck className="size-4 text-muted-foreground" />安全状态</PanelTitle>
+            <CardContent className="space-y-3 px-5 pb-5 pt-0">
+              {SECURITY_STATUS.map((status) => (
+                <div key={status} className="flex items-start gap-2.5 text-sm">
+                  <CheckCircle weight="fill" className="mt-0.5 size-4 shrink-0 text-emerald-600" />
+                  <span className="leading-snug">{status}</span>
+                </div>
+              ))}
+            </CardContent>
+          </Panel>
+          <Panel>
+            <PanelTitle><HardDrive className="size-4 text-muted-foreground" />存储</PanelTitle>
+            <CardContent className="px-5 pb-5 pt-0">
+              <Row label="数据库" value="SQLite (modernc)" />
+              <Row label="消息队列" value="内置 SQLite" />
+              <Row label="会话存储" value="内存（重启清空）" />
+            </CardContent>
+          </Panel>
+        </div>
       </div>
     </PageFrame>
   );

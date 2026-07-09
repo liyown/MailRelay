@@ -25,7 +25,6 @@ export function ConsoleShell({ session }: { session: Session }) {
         executions: <ExecutionsPage />,
         queue: <QueuePage csrf={session.csrf} />,
         logs: <LogsPage />,
-        security: <SettingsPage security />,
         settings: <SettingsPage />,
       })[page],
     [page, session.csrf],

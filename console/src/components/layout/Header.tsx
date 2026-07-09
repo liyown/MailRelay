@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Bell, CaretDown, Envelope, MagnifyingGlass, Question, SignOut } from "@phosphor-icons/react";
+import { Bell, CaretDown, MagnifyingGlass, Question, SignOut } from "@phosphor-icons/react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -64,10 +64,6 @@ export function Header({
   return (
     <header className="flex h-[72px] items-center gap-4 border-b border-border bg-card/90 px-5 backdrop-blur lg:px-8">
       {onMobileNav}
-      <div className="hidden h-10 w-[164px] shrink-0 items-center rounded-lg border border-border bg-background px-3 text-sm lg:flex">
-        <Envelope className="mr-2 size-4" />
-        生产环境
-      </div>
       <Dialog open={searchOpen} onOpenChange={setSearchOpen}>
         <button
           type="button"
@@ -108,12 +104,6 @@ export function Header({
         </DialogContent>
       </Dialog>
       <div className="ml-auto flex items-center gap-2 md:gap-4">
-        <div className="hidden items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-medium sm:flex">
-          <span className="size-2 rounded-full bg-emerald-600" />
-          系统健康
-          <br />
-          正常
-        </div>
         <IconButton label="通知">
           <Bell />
         </IconButton>

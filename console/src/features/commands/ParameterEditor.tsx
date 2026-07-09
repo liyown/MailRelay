@@ -15,7 +15,12 @@ export type ParameterRow = {
   example: string;
 };
 
-const TYPES = ["string", "integer", "number", "boolean"];
+const TYPES = [
+  { value: "string", label: "string（文本）" },
+  { value: "integer", label: "integer（整数）" },
+  { value: "number", label: "number（小数）" },
+  { value: "boolean", label: "boolean（布尔）" },
+];
 
 export const emptyRow = (): ParameterRow => ({
   name: "",
@@ -96,8 +101,8 @@ export function ParameterEditor({
             </SelectTrigger>
             <SelectContent>
               {TYPES.map((t) => (
-                <SelectItem key={t} value={t} className="text-xs">
-                  {t}
+                <SelectItem key={t.value} value={t.value} className="text-xs">
+                  {t.label}
                 </SelectItem>
               ))}
             </SelectContent>

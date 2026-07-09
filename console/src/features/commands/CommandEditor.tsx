@@ -6,7 +6,9 @@ import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, Sele
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ParameterEditor, type ParameterRow, rowsToParams, paramsToRows, emptyRow } from "./ParameterEditor";
+import { EmailPreview } from "./EmailPreview";
 import { HttpConfig } from "./config/HttpConfig";
+import { HttpRequestConfig } from "./config/HttpRequestConfig";
 import { WebhookConfig } from "./config/WebhookConfig";
 import { WorkflowConfig } from "./config/WorkflowConfig";
 import { QueueConfig } from "./config/QueueConfig";
@@ -14,12 +16,13 @@ import { ShellConfig } from "./config/ShellConfig";
 import { GenericConfig } from "./config/GenericConfig";
 import type { CommandDetail } from "@/lib/api";
 
-const STABLE_HANDLERS = ["http", "webhook", "workflow", "queue"];
+const STABLE_HANDLERS = ["http", "http_request", "webhook", "workflow", "queue"];
 const EXPERIMENTAL_HANDLERS = ["plugin", "shell", "agent", "mcp"];
 const NAME_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
 
 const HANDLER_DESC: Record<string, string> = {
   http:    "向外部 HTTP 接口发送请求，支持自定义方法、Header 和 Body 模板。",
+  http_request: "邮件正文就是 HTTP 请求报文，按原始请求转发到允许的目标。",
   webhook: "推送带 HMAC 签名的 JSON 信封到外部 Webhook，参数以结构化对象传入。",
   workflow:"按顺序调用其他已声明命令，任意步骤失败则中止。",
   queue:   "将目标命令排入持久队列异步执行，失败自动重试。",
@@ -34,6 +37,7 @@ export function CommandEditor({
   initial,
   existingCommands,
   httpHosts,
+  token,
   onClose,
   onSave,
 }: {
@@ -41,6 +45,7 @@ export function CommandEditor({
   initial: CommandDetail | null;
   existingCommands: CommandDetail[];
   httpHosts: string[];
+  token: string;
   onClose: () => void;
   onSave: (command: CommandDetail) => void;
 }) {
@@ -100,10 +105,12 @@ export function CommandEditor({
     switch (handler) {
       case "http":
         return <HttpConfig key={configKey} config={config} setConfig={setConfig} paramNames={paramNames} httpHosts={httpHosts} />;
+      case "http_request":
+        return <HttpRequestConfig key={configKey} config={config} setConfig={setConfig} />;
       case "webhook":
         return <WebhookConfig key={configKey} config={config} setConfig={setConfig} httpHosts={httpHosts} />;
       case "workflow":
-        return <WorkflowConfig key={configKey} config={config} setConfig={setConfig} existingCommands={existingCommands} />;
+        return <WorkflowConfig key={configKey} config={config} setConfig={setConfig} existingCommands={existingCommands} paramNames={paramNames} />;
       case "queue":
         return <QueueConfig key={configKey} config={config} setConfig={setConfig} existingCommands={existingCommands} />;
       case "shell":
@@ -131,6 +138,7 @@ export function CommandEditor({
               参数声明{paramRows.length > 0 ? ` (${paramRows.length})` : ""}
             </TabsTrigger>
             <TabsTrigger value="config" className="flex-1">处理器配置</TabsTrigger>
+            <TabsTrigger value="preview" className="flex-1">邮件示例</TabsTrigger>
           </TabsList>
 
           {/* Tab 1 — 基本信息 */}
@@ -207,6 +215,11 @@ export function CommandEditor({
           {/* Tab 3 — 处理器配置 */}
           <TabsContent value="config" className="min-h-0 overflow-y-auto pr-1">
             <div className="py-2">{configForm()}</div>
+          </TabsContent>
+
+          {/* Tab 4 — 邮件示例 */}
+          <TabsContent value="preview" className="min-h-0 overflow-y-auto pr-1">
+            <EmailPreview name={name} paramRows={paramRows} token={token} />
           </TabsContent>
         </Tabs>
 
