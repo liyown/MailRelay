@@ -1,0 +1,65 @@
+root = "."
+tmp_dir = ".dev/air"
+
+[build]
+cmd = "task console-embed && go build -o ./.dev/mailrelay ./cmd/mailrelay"
+entrypoint = ["./.dev/mailrelay", "run", "--config", "mailrelay.yaml"]
+delay = 800
+exclude_dir = [
+  ".dev",
+  ".git",
+  "console/dist",
+  "console/node_modules",
+  "data",
+  "internal/web/ui",
+  "tmp",
+  "vendor"
+]
+exclude_file = []
+exclude_regex = ["_test.go"]
+exclude_unchanged = true
+follow_symlink = false
+include_dir = [
+  "cmd",
+  "console",
+  "internal"
+]
+include_ext = [
+  "css",
+  "go",
+  "html",
+  "js",
+  "json",
+  "ts",
+  "tsx",
+  "yaml",
+  "yml"
+]
+include_file = [
+  "go.mod",
+  "go.sum",
+  "mailrelay.yaml"
+]
+kill_delay = "2s"
+log = "build-errors.log"
+poll = false
+send_interrupt = true
+stop_on_error = false
+
+[color]
+app = ""
+build = "yellow"
+main = "magenta"
+runner = "green"
+watcher = "cyan"
+
+[log]
+main_only = false
+time = true
+
+[misc]
+clean_on_exit = true
+
+[screen]
+clear_on_rebuild = false
+keep_scroll = true

@@ -1,0 +1,110 @@
+# MailRelay — Task runner  https://taskfile.dev
+# Install: brew install go-task
+# Usage:   task <name>
+
+version: '3'
+
+tasks:
+
+  # ── Default ────────────────────────────────────────────────────────────────
+
+  default:
+    desc: List all available tasks
+    cmds: [task --list]
+    silent: true
+
+  # ── Go ─────────────────────────────────────────────────────────────────────
+
+  build:
+    desc: Build the mailrelay binary
+    cmds: [go build ./cmd/mailrelay]
+
+  test:
+    desc: Run all tests
+    cmds: [go test ./...]
+
+  test-race:
+    desc: Run all tests with race detector
+    cmds: [go test -race ./...]
+
+  test-pkg:
+    desc: "Run tests for a single package  (e.g. task test-pkg -- internal/router)"
+    cmds:
+      - go test ./{{.CLI_ARGS}}/...
+
+  test-one:
+    desc: "Run a single named test  (e.g. task test-one -- TestDedup ./internal/store/...)"
+    cmds:
+      - go test -run {{.CLI_ARGS}}
+
+  vet:
+    desc: Run go vet
+    cmds: [go vet ./...]
+
+  check:
+    desc: Full pre-commit check (vet + race tests)
+    deps: [vet, test-race]
+
+  run:
+    desc: Start the service
+    cmds: [go run ./cmd/mailrelay run]
+
+  dev:
+    desc: Watch files, rebuild embedded console + Go binary, and restart
+    cmds:
+      - go run github.com/air-verse/air@latest -c .air.toml
+
+  once:
+    desc: Process one email and exit
+    cmds: [go run ./cmd/mailrelay once]
+
+  status:
+    desc: Show runtime status
+    cmds: [go run ./cmd/mailrelay status]
+
+  doctor:
+    desc: Run diagnostics
+    cmds: [go run ./cmd/mailrelay doctor]
+
+  # ── Console ────────────────────────────────────────────────────────────────
+
+  console-dev:
+    desc: Start the Vite dev server
+    dir: console
+    cmds: [pnpm dev]
+
+  console-embed:
+    desc: Build console and embed into internal/web/ui/ for Go embedding
+    dir: console
+    cmds: [pnpm build:embed]
+
+  console-test:
+    desc: Run console unit tests
+    dir: console
+    cmds: [pnpm test]
+
+  console-typecheck:
+    desc: TypeScript type-check
+    dir: console
+    cmds: [pnpm typecheck]
+
+  # ── Preview ────────────────────────────────────────────────────────────────
+
+  preview:
+    desc: Build frontend + Go binary, then run with project config (mailrelay.yaml)
+    cmds:
+      - task: console-embed
+      - task: build
+      - ./mailrelay run --config mailrelay.yaml
+
+  # ── Combined ───────────────────────────────────────────────────────────────
+
+  release:
+    desc: Full release build — embed console then compile Go binary
+    cmds:
+      - task: console-embed
+      - task: build
+
+  test-all:
+    desc: Full test suite — Go (race) + console
+    deps: [test-race, console-test]
