@@ -110,6 +110,11 @@ type ConsoleCounts struct {
 	ReplyPending, ReplyRunning, ReplyDead int
 }
 
+type SeriesPoint struct {
+	BucketStart    time.Time
+	Count, Success int
+}
+
 const dbTimeLayout = "2006-01-02T15:04:05.000000000Z07:00"
 
 func dbTime(t time.Time) string {
@@ -832,4 +837,53 @@ func (s *Store) ConsoleCountsSince(ctx context.Context, since time.Time) (Consol
 		durations = append(durations, time.Duration(ms)*time.Millisecond)
 	}
 	return counts, durations, rows.Err()
+}
+
+// ConsoleSeriesSince returns execution counts grouped into `buckets` equal-width
+// time buckets spanning [since, now]. Each bucket carries the total and the
+// successful execution count so the console can render an accurate trend.
+func (s *Store) ConsoleSeriesSince(ctx context.Context, since time.Time, buckets int) ([]SeriesPoint, error) {
+	if buckets < 1 {
+		buckets = 1
+	}
+	now := time.Now()
+	if !since.Before(now) {
+		since = now.Add(-time.Minute)
+	}
+	width := now.Sub(since) / time.Duration(buckets)
+	if width <= 0 {
+		width = time.Nanosecond
+	}
+	points := make([]SeriesPoint, buckets)
+	for i := range points {
+		points[i].BucketStart = since.Add(time.Duration(i) * width)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT started_at,status FROM executions WHERE started_at>=? ORDER BY started_at`, dbTime(since))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var startedRaw string
+		var status string
+		if err := rows.Scan(&startedRaw, &status); err != nil {
+			return nil, err
+		}
+		startedAt, err := parseDBTime(startedRaw)
+		if err != nil {
+			return nil, err
+		}
+		idx := int(startedAt.Sub(since) / width)
+		if idx < 0 {
+			idx = 0
+		}
+		if idx >= buckets {
+			idx = buckets - 1
+		}
+		points[idx].Count++
+		if status == "success" {
+			points[idx].Success++
+		}
+	}
+	return points, rows.Err()
 }

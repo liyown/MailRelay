@@ -67,6 +67,12 @@ type WorkCounts struct {
 	Dead    int `json:"dead"`
 }
 
+type SeriesPoint struct {
+	At      time.Time `json:"at"`
+	Count   int       `json:"count"`
+	Success int       `json:"success"`
+}
+
 type Dashboard struct {
 	Range            string          `json:"range"`
 	ExecutionCount   int             `json:"execution_count"`
@@ -76,6 +82,7 @@ type Dashboard struct {
 	ActiveHandlers   int             `json:"active_handlers"`
 	Queue            WorkCounts      `json:"queue"`
 	Replies          WorkCounts      `json:"replies"`
+	Series           []SeriesPoint   `json:"series"`
 	RecentExecutions []ExecutionItem `json:"recent_executions"`
 	RecentEvents     []EventItem     `json:"recent_events"`
 }
