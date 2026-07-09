@@ -1,15 +1,15 @@
 mail:
-  imap: {address: "imap.example.com:993", username: "relay@example.com", password: "${IMAP_PASSWORD}", mailbox: INBOX, poll_interval: 30s}
-  smtp: {address: "smtp.example.com:465", username: "relay@example.com", password: "${SMTP_PASSWORD}", from: "relay@example.com"}
+  imap: {address: "imap.qq.com:993", username: "liuyaowenlyw@qq.com", password: "cffewlnzpdijbaic", mailbox: INBOX, poll_interval: 30s}
+  smtp: {address: "smtp.qq.com:465", username: "liuyaowenlyw@qq.com", password: "cffewlnzpdijbaic", from: "liuyaowenlyw@qq.com"}
 security:
-  token: "${MAILRELAY_TOKEN}"
-  allow: ["me@example.com"]
+  token: "test"
+  allow: ["liuyaowenlyw@qq.com"]
   http_hosts: ["api.example.com", "agent.example.com", "mcp.example.com"]
 storage: {path: "data/mailrelay.db"}
 web:
   enabled: false
   address: "127.0.0.1:8787"
-runtime: {command_timeout: 30s, config_reload: true, catalog_notify: ["me@example.com"]}
+runtime: {command_timeout: 30s, config_reload: true, catalog_notify: ["liuyaowenlyw@qq.com"]}
 handlers: {}
 commands:
   - name: push
