@@ -7,7 +7,7 @@ import './global.css';
 export const metadata: Metadata = {
   metadataBase: new URL(`${site.url}/`),
   applicationName: site.name,
-  title: { default: 'MailRelay — 可审计的邮件远程操作', template: '%s | MailRelay' },
+  title: { default: site.title, template: '%s | MailRelay' },
   description: site.description,
   keywords,
   authors: [{ name: 'becomeopc' }],

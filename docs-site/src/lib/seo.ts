@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 
 export const site = {
   name: 'MailRelay',
-  title: 'MailRelay — 可审计的邮件远程操作',
-  description: '用认证邮件触发受限 Command，并持久化去重、审计、重试、dead letter 与回复投递。',
+  title: 'MailRelay — 用邮件触发受控 API 和命令',
+  description: '把 ChatGPT 手机端、快捷指令、NAS 脚本或任意邮件客户端接到你配置好的 HTTP、Webhook、Workflow 和 Queue。',
   url: 'https://liyown.github.io/MailRelay',
   github: 'https://github.com/liyown/MailRelay',
   locale: 'zh_CN',
@@ -12,7 +12,8 @@ export const site = {
 export const keywords = [
   'MailRelay',
   '邮件自动化',
-  '邮件远程操作',
+  '邮件触发 API',
+  'ChatGPT 调用外部 API',
   'Email automation',
   'IMAP automation',
   'SMTP reply',

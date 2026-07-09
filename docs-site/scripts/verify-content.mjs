@@ -22,19 +22,19 @@ const handlerOverview = await readFile(new URL('content/docs/handlers/index.mdx'
 const workflowQueue = await readFile(new URL('content/docs/handlers/workflow-queue.mdx', root), 'utf8');
 const reliability = await readFile(new URL('content/docs/operations/reliability.mdx', root), 'utf8');
 for (const phrase of [
-  '用邮件执行可审计的远程操作',
-  'MailRelay — 可审计的邮件远程操作',
-  '用认证邮件触发受限 Command',
-  '稳定性不是插件，是运行时边界',
-  '去重、审计、重试、dead letter 与回复投递都由 SQLite 持久化',
+  '让能发邮件的客户端调用受控 API',
+  'MailRelay — 用邮件触发受控 API 和命令',
+  'ChatGPT 手机端调用外部 API',
+  '收邮件、验身份、跑命令、写记录、回信',
+  '把 ChatGPT 手机端、快捷指令、NAS 脚本或任意邮件客户端接到你配置好的 HTTP',
   'mailrelay run',
-  'Golden scenarios',
-  '四个适合邮件触发的运维场景',
-  'Why email works',
+  'Use cases',
+  '从手机、ChatGPT 或脚本发一封邮件',
+  'Email as input',
   'Command catalog',
-  'MailRelay vs. the usual remote controls',
-  'Runtime safety',
-  'First stable command',
+  'Where it fits',
+  'Runtime checks',
+  'Try it',
 ]) {
   if (!publicCopy.includes(phrase)) throw new Error(`landing page is missing: ${phrase}`);
 }
@@ -49,6 +49,10 @@ for (const phrase of [
   '不重新发明控制通道',
   '不是一句标语',
   '不要先造平台',
+  '稳定性不是插件',
+  'Golden scenarios',
+  'First stable command',
+  '四个适合邮件触发的运维场景',
 ]) {
   if (publicCopy.includes(phrase)) throw new Error(`landing page contains filler copy: ${phrase}`);
 }
