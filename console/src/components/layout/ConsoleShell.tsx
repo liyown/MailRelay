@@ -31,11 +31,11 @@ export function ConsoleShell({ session }: { session: Session }) {
   );
   return (
     <TooltipProvider>
-      <div className="min-h-screen bg-background text-foreground" data-user={session.user.id}>
+      <div className="h-[100dvh] overflow-hidden bg-background text-foreground" data-user={session.user.id}>
         <aside className="fixed inset-y-0 left-0 z-30 hidden lg:block">
           <SideNav page={page} setPage={setPage} />
         </aside>
-        <div className="lg:pl-[224px]">
+        <div className="flex h-full min-w-0 flex-col lg:pl-[224px]">
           <Header
             session={session}
             setPage={setPage}
@@ -52,7 +52,9 @@ export function ConsoleShell({ session }: { session: Session }) {
               </Sheet>
             }
           />
-          <main className="mx-auto max-w-[1500px] p-4 lg:p-6">{content}</main>
+          <main className="min-h-0 flex-1 overflow-y-auto">
+            <div className="mx-auto max-w-[1500px] p-4 lg:p-6">{content}</div>
+          </main>
         </div>
       </div>
     </TooltipProvider>
