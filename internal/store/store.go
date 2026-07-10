@@ -715,6 +715,33 @@ FROM executions e LEFT JOIN processed_messages m ON m.id=e.message_id WHERE 1=1`
 	return out, rows.Err()
 }
 
+// ConsoleLatestExecutions returns the newest audit entry for each command.
+// It exposes the same safe projection used by the paginated console view.
+func (s *Store) ConsoleLatestExecutions(ctx context.Context) ([]ExecutionRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT e.id,e.message_id,e.command,e.handler,e.status,COALESCE(e.summary,''),COALESCE(e.error,''),e.started_at,e.duration_ms,COALESCE(m.sender,'')
+FROM executions e
+JOIN (SELECT command, MAX(id) AS id FROM executions GROUP BY command) latest ON latest.id=e.id
+LEFT JOIN processed_messages m ON m.id=e.message_id
+ORDER BY e.id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ExecutionRecord
+	for rows.Next() {
+		var item ExecutionRecord
+		var started string
+		var durationMS int64
+		if err := rows.Scan(&item.ID, &item.MessageID, &item.Command, &item.Handler, &item.Status, &item.Summary, &item.Error, &started, &durationMS, &item.Sender); err != nil {
+			return nil, err
+		}
+		item.StartedAt, _ = parseDBTime(started)
+		item.Duration = time.Duration(durationMS) * time.Millisecond
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) ConsoleJobs(ctx context.Context, beforeID int64, limit int, status string) ([]JobRecord, error) {
 	query := `SELECT id,command,status,attempts,max_attempts,available_at FROM queue_jobs WHERE 1=1`
 	args := make([]any, 0, 3)

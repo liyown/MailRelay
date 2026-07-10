@@ -15,6 +15,10 @@ export function useCommands(enabled = true) {
   return useQuery({ queryKey: ["commands"], queryFn: api.commands, enabled });
 }
 
+export function useCommandActivity(enabled = true) {
+  return useQuery({ queryKey: ["command-activity"], queryFn: api.commandActivity, enabled, refetchInterval: REFRESH.dashboard });
+}
+
 export function useConfigDraft(enabled = true) {
   return useQuery({ queryKey: ["config-draft"], queryFn: api.configDraft, enabled });
 }

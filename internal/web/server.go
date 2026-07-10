@@ -25,21 +25,29 @@ type Editor interface {
 	ApplyDraft(ctx context.Context, draft config.Draft) error
 }
 
+// Previewer validates a raw email without executing its command or persisting
+// any state. It is optional so read-only console deployments stay supported.
+type Previewer interface {
+	PreviewMail(context.Context, string) MailPreview
+}
+
 type ServerOptions struct {
 	Sessions   *SessionManager
 	Repository *Repository
 	Editor     Editor
+	Previewer  Previewer
 }
 
 type server struct {
-	sessions *SessionManager
-	repo     *Repository
-	editor   Editor
-	mux      *http.ServeMux
+	sessions  *SessionManager
+	repo      *Repository
+	editor    Editor
+	previewer Previewer
+	mux       *http.ServeMux
 }
 
 func NewServer(options ServerOptions) http.Handler {
-	s := &server{sessions: options.Sessions, repo: options.Repository, editor: options.Editor, mux: http.NewServeMux()}
+	s := &server{sessions: options.Sessions, repo: options.Repository, editor: options.Editor, previewer: options.Previewer, mux: http.NewServeMux()}
 	s.routes()
 	return s.security(s.mux)
 }
@@ -51,6 +59,8 @@ func (s *server) routes() {
 	s.mux.HandleFunc("GET /api/v1/health", s.requireSession(s.health))
 	s.mux.HandleFunc("GET /api/v1/dashboard", s.requireSession(s.dashboard))
 	s.mux.HandleFunc("GET /api/v1/commands", s.requireSession(s.commands))
+	s.mux.HandleFunc("GET /api/v1/command-activity", s.requireSession(s.commandActivity))
+	s.mux.HandleFunc("POST /api/v1/mail/preview", s.requireSession(s.previewMail))
 	s.mux.HandleFunc("GET /api/v1/config/draft", s.requireSession(s.configDraft))
 	s.mux.HandleFunc("PUT /api/v1/config/draft", s.requireCSRF(s.saveConfigDraft))
 	s.mux.HandleFunc("GET /api/v1/executions", s.requireSession(s.executions))
@@ -175,6 +185,37 @@ func (s *server) dashboard(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) commands(w http.ResponseWriter, _ *http.Request) {
 	s.writeJSON(w, http.StatusOK, map[string]any{"items": s.repo.Commands()})
+}
+
+func (s *server) commandActivity(w http.ResponseWriter, r *http.Request) {
+	items, err := s.repo.CommandActivity(r.Context())
+	if err != nil {
+		s.writeError(w, r, http.StatusInternalServerError, "internal", "Unable to load command activity")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *server) previewMail(w http.ResponseWriter, r *http.Request) {
+	if s.previewer == nil {
+		s.writeError(w, r, http.StatusNotImplemented, "not_implemented", "Mail simulation is not available")
+		return
+	}
+	if !strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/json") {
+		s.writeError(w, r, http.StatusUnsupportedMediaType, "unsupported_media_type", "Content-Type must be application/json")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 72<<10)
+	var body struct {
+		Raw string `json:"raw"`
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil || strings.TrimSpace(body.Raw) == "" {
+		s.writeError(w, r, http.StatusBadRequest, "invalid_request", "A raw email is required")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, s.previewer.PreviewMail(r.Context(), body.Raw))
 }
 
 // configDraft returns the editable configuration (commands, outbound host

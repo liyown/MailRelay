@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	mailstd "net/mail"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +32,17 @@ type App struct {
 	replyMaxAttempts int
 	initialBackoff   time.Duration
 	maxBackoff       time.Duration
+}
+
+// MailPreview is the result of parsing and validating a mail command without
+// claiming a message, executing a handler, or sending a reply.
+type MailPreview struct {
+	Accepted   bool
+	Stage      string
+	Command    string
+	Handler    string
+	Parameters []string
+	ErrorKind  string
 }
 
 var (
@@ -338,6 +350,51 @@ func (a *App) ReplaceSecurity(from string, allow []string, token string) {
 	a.from = from
 	a.allow = append([]string(nil), allow...)
 	a.token = token
+}
+
+func (a *App) PreviewMail(raw string) MailPreview {
+	m, err := mailparse.Parse(strings.NewReader(raw))
+	if err != nil {
+		return MailPreview{Stage: "parse", ErrorKind: "parse"}
+	}
+
+	a.mu.RLock()
+	allow := append([]string(nil), a.allow...)
+	token, from, route := a.token, a.from, a.router
+	a.mu.RUnlock()
+	if sameMailboxAddress(m.Request.Sender, from) {
+		return MailPreview{Stage: "auth", Command: m.Request.Name, ErrorKind: "self_message"}
+	}
+	if err = security.Authenticate(m.Request, m.Token, allow, token); err != nil {
+		kind := "authentication"
+		if safeAuthReason(err) == "invalid token" {
+			kind = "token"
+		} else if safeAuthReason(err) == "sender not allowed" {
+			kind = "sender"
+		}
+		return MailPreview{Stage: "auth", Command: m.Request.Name, ErrorKind: kind}
+	}
+	if m.Request.Name == "help" {
+		return MailPreview{Accepted: true, Stage: "route", Command: "help", Handler: "builtin", Parameters: sortedParameterNames(m.Request.Params)}
+	}
+	c, ok := route.Command(m.Request.Name)
+	if !ok {
+		return MailPreview{Stage: "route", Command: m.Request.Name, ErrorKind: "unknown_command"}
+	}
+	params, err := command.ValidateParams(c, m.Request.Params)
+	if err != nil {
+		return MailPreview{Stage: "parameters", Command: c.Name, Handler: c.Handler, ErrorKind: "invalid_parameters"}
+	}
+	return MailPreview{Accepted: true, Stage: "ready", Command: c.Name, Handler: c.Handler, Parameters: sortedParameterNames(params)}
+}
+
+func sortedParameterNames(params map[string]any) []string {
+	names := make([]string, 0, len(params))
+	for name := range params {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 func (a *App) retryBackoff(attempt int) time.Duration {
 	a.mu.RLock()

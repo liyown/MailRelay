@@ -61,6 +61,24 @@ type CommandItem struct {
 	ParameterCount int    `json:"parameter_count"`
 }
 
+type CommandActivity struct {
+	Command    string    `json:"command"`
+	Status     string    `json:"status"`
+	Summary    string    `json:"summary"`
+	ErrorKind  string    `json:"error_kind,omitempty"`
+	StartedAt  time.Time `json:"started_at"`
+	DurationMS int64     `json:"duration_ms"`
+}
+
+type MailPreview struct {
+	Accepted   bool     `json:"accepted"`
+	Stage      string   `json:"stage"`
+	Command    string   `json:"command,omitempty"`
+	Handler    string   `json:"handler,omitempty"`
+	Parameters []string `json:"parameters,omitempty"`
+	ErrorKind  string   `json:"error_kind,omitempty"`
+}
+
 type WorkCounts struct {
 	Pending int `json:"pending"`
 	Running int `json:"running"`

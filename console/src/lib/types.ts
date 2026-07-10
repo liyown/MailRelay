@@ -22,6 +22,24 @@ export type CommandItem = {
   parameter_count: number;
 };
 
+export type CommandActivity = {
+  command: string;
+  status: string;
+  summary: string;
+  error_kind?: string;
+  started_at: string;
+  duration_ms: number;
+};
+
+export type MailPreview = {
+  accepted: boolean;
+  stage: string;
+  command?: string;
+  handler?: string;
+  parameters?: string[];
+  error_kind?: string;
+};
+
 // Parameter and CommandDetail mirror internal/command.Command — the full,
 // editable shape (with parameters and handler config), as opposed to the reduced
 // read-only CommandItem projection.

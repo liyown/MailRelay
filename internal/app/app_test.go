@@ -25,6 +25,34 @@ func (h *testHandler) Execute(context.Context, command.Context) (command.Result,
 	return command.Result{Status: "success", Summary: "done", Body: "ok"}, nil
 }
 
+func TestPreviewMailValidatesWithoutExecuting(t *testing.T) {
+	h := &testHandler{}
+	reg := handler.NewRegistry()
+	if err := reg.Register(h); err != nil {
+		t.Fatal(err)
+	}
+	route, err := router.New([]command.Command{{
+		Name: "push", Handler: "test",
+		Parameters: map[string]command.Parameter{"message": {Type: "string", Required: true}},
+	}}, reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := New(nil, route, nil, "relay@example.com", []string{"me@example.com"}, "secret")
+	accepted := a.PreviewMail("From: me@example.com\nSubject: push\n\n_token=secret\nmessage=hello")
+	if !accepted.Accepted || accepted.Handler != "test" || h.calls != 0 {
+		t.Fatalf("preview=%#v calls=%d", accepted, h.calls)
+	}
+	badToken := a.PreviewMail("From: me@example.com\nSubject: push\n\n_token=wrong\nmessage=hello")
+	if badToken.Accepted || badToken.ErrorKind != "token" {
+		t.Fatalf("token preview=%#v", badToken)
+	}
+	badParams := a.PreviewMail("From: me@example.com\nSubject: push\n\n_token=secret")
+	if badParams.Accepted || badParams.ErrorKind != "invalid_parameters" {
+		t.Fatalf("params preview=%#v", badParams)
+	}
+}
+
 type paramsCaptureHandler struct {
 	calls int
 	got   map[string]any

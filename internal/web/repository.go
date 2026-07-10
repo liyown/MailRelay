@@ -158,6 +158,18 @@ func (r *Repository) Commands() []CommandItem {
 	return items
 }
 
+func (r *Repository) CommandActivity(ctx context.Context) ([]CommandActivity, error) {
+	rows, err := r.store.ConsoleLatestExecutions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]CommandActivity, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, CommandActivity{Command: row.Command, Status: row.Status, Summary: row.Summary, ErrorKind: row.Error, StartedAt: row.StartedAt, DurationMS: row.Duration.Milliseconds()})
+	}
+	return items, nil
+}
+
 // SetCommands atomically swaps the command snapshot the console displays. The
 // runtime calls this after every successful config reload or console edit so the
 // read views (and command count) reflect the live catalog instead of the

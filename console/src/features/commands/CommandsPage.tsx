@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { CaretLeft, CaretRight, Copy, Plus, PencilSimple, Trash } from "@phosphor-icons/react";
+import { CaretLeft, CaretRight, Copy, EnvelopeSimple, Plus, PencilSimple, Trash } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -13,12 +13,13 @@ import { DataState } from "@/components/common/DataState";
 import { MaturityBadge } from "@/components/common/StatusBadge";
 import { ConfirmButton } from "@/components/common/ConfirmButton";
 import { APIError, type CommandDetail, type ConfigDraft } from "@/lib/api";
-import { useConfigDraft } from "@/hooks/queries";
+import { useCommandActivity, useConfigDraft } from "@/hooks/queries";
 import { useSaveConfig } from "@/hooks/useSaveConfig";
 import { CommandEditor } from "./CommandEditor";
+import { EmailSimulator } from "./EmailSimulator";
 
 const STABLE_HANDLERS = ["http", "http_request", "webhook", "workflow", "queue"];
-const HEADERS = ["命令", "处理器", "参数", ""];
+const HEADERS = ["命令", "处理器", "参数", "最近执行", ""];
 const PAGE_SIZE = 8;
 
 // Split on newlines, trim each line, drop blanks — used only on blur/save.
@@ -80,6 +81,7 @@ export function CommandsPage({ csrf }: { csrf: string }) {
   const [search, setSearch] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [editorOpen, setEditorOpen] = useState(false);
+  const [simulatorOpen, setSimulatorOpen] = useState(false);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
 
   useEffect(() => {
@@ -92,6 +94,8 @@ export function CommandsPage({ csrf }: { csrf: string }) {
   );
 
   const commands = draft?.commands ?? [];
+  const activity = useCommandActivity();
+  const activityByCommand = new Map((activity.data?.items ?? []).map((item) => [item.command, item]));
   const filtered = commands
     .map((command, index) => ({ command, index }))
     .filter(({ command }) =>
@@ -152,6 +156,13 @@ export function CommandsPage({ csrf }: { csrf: string }) {
 
   const setField = <K extends keyof ConfigDraft>(key: K, value: ConfigDraft[K]) =>
     setDraft((prev) => (prev ? { ...prev, [key]: value } : prev));
+
+  const addHTTPHost = (host: string) => {
+    setDraft((prev) => {
+      if (!prev || prev.http_hosts.some((item) => item.toLowerCase() === host.toLowerCase())) return prev;
+      return { ...prev, http_hosts: [...prev.http_hosts, host] };
+    });
+  };
 
   const discard = () => draftQuery.data && setDraft(structuredClone(draftQuery.data));
   const saveError =
@@ -219,6 +230,10 @@ export function CommandsPage({ csrf }: { csrf: string }) {
                     <Plus />
                     新建命令
                   </Button>
+                  <Button size="sm" variant="outline" onClick={() => setSimulatorOpen(true)}>
+                    <EnvelopeSimple />
+                    模拟邮件
+                  </Button>
                 </div>
               }
             >
@@ -233,7 +248,7 @@ export function CommandsPage({ csrf }: { csrf: string }) {
               >
                 <div className="flex min-h-0 flex-1 flex-col">
                   <div className="min-h-0 flex-1 overflow-auto">
-                    <Table className="min-w-[760px]">
+                    <Table className="min-w-[920px]">
                       <TableHeader>
                         <TableRow>
                           {HEADERS.map((h, i) => (
@@ -241,7 +256,7 @@ export function CommandsPage({ csrf }: { csrf: string }) {
                               key={i}
                               className={
                                 i === 0 ? "w-[48%] px-5 text-xs uppercase tracking-wide text-muted-foreground"
-                                : i === 3 ? "px-5 text-right text-xs uppercase tracking-wide text-muted-foreground"
+                                : i === 4 ? "px-5 text-right text-xs uppercase tracking-wide text-muted-foreground"
                                 : "px-4 text-xs uppercase tracking-wide text-muted-foreground"
                               }
                             >
@@ -270,6 +285,20 @@ export function CommandsPage({ csrf }: { csrf: string }) {
                               <Badge variant="outline" className="border-primary/20 bg-primary/5 font-mono text-[11px] text-primary">
                                 {command.handler}
                               </Badge>
+                            </TableCell>
+                            <TableCell className="max-w-56 px-4 py-4">
+                              {(() => {
+                                const latest = activityByCommand.get(command.name);
+                                if (!latest) return <span className="text-xs text-muted-foreground">暂无记录</span>;
+                                return (
+                                  <div className="flex min-w-0 items-center gap-2">
+                                    <Badge variant={latest.status === "success" ? "secondary" : "destructive"} className="shrink-0 text-[10px]">
+                                      {latest.status === "success" ? "成功" : "失败"}
+                                    </Badge>
+                                    <span className="truncate text-xs text-muted-foreground" title={latest.summary}>{latest.summary || "无摘要"}</span>
+                                  </div>
+                                );
+                              })()}
                             </TableCell>
                             <TableCell className="px-4 py-4">
                               <span className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
@@ -437,8 +466,16 @@ export function CommandsPage({ csrf }: { csrf: string }) {
         existingCommands={commands}
         httpHosts={draft?.http_hosts ?? []}
         token={draft?.token ?? ""}
+        onAddHTTPHost={addHTTPHost}
         onClose={() => setEditorOpen(false)}
         onSave={applyCommand}
+      />
+      <EmailSimulator
+        open={simulatorOpen}
+        commands={commands}
+        token={draft?.token ?? ""}
+        allow={draft?.allow ?? []}
+        onClose={() => setSimulatorOpen(false)}
       />
     </PageFrame>
   );

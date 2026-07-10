@@ -44,7 +44,7 @@ web:
   session_ttl: 8h
 ```
 
-Open `http://127.0.0.1:8787`. The authenticated console can edit the command catalog, command token, sender allowlist, HTTP host allowlist, and catalog-change notification recipients through the draft configuration API. The API never returns mailbox credentials, web session secrets, full mail bodies, or raw provider errors. Handler secrets should stay in `${ENV_VAR}` references or `sensitive` parameters. Keep the default loopback binding unless the console is placed behind a trusted HTTPS reverse proxy.
+Open `http://127.0.0.1:8787`. The authenticated console can edit the command catalog, command token, sender allowlist, HTTP host allowlist, and catalog-change notification recipients through the draft configuration API. Its mail simulator checks parsing, sender/token authentication, command routing, and parameter validation without executing a handler, calling an external API, writing an audit record, or sending a reply. The API never returns mailbox credentials, web session secrets, full mail bodies, or raw provider errors. Handler secrets should stay in `${ENV_VAR}` references or `sensitive` parameters. Keep the default loopback binding unless the console is placed behind a trusted HTTPS reverse proxy.
 
 ## Sending a command
 

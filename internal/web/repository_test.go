@@ -53,6 +53,17 @@ func TestRepositoryExecutionPaginationIsStable(t *testing.T) {
 	}
 }
 
+func TestRepositoryCommandActivityReturnsLatestAuditForEachCommand(t *testing.T) {
+	repo := seededRepository(t)
+	items, err := repo.CommandActivity(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Command != "notify" || items[0].Status != "success" {
+		t.Fatalf("activity=%#v", items)
+	}
+}
+
 func TestRepositoryNeverReturnsPersistedSecretFields(t *testing.T) {
 	repo := seededRepository(t)
 	ctx := context.Background()

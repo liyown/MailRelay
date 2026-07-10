@@ -1,10 +1,12 @@
 import type {
   CommandItem,
+  CommandActivity,
   ConfigDraft,
   Dashboard,
   EventItem,
   Execution,
   Job,
+  MailPreview,
   Page,
   Reply,
   Session,
@@ -58,6 +60,8 @@ export const api = {
   logout: (csrf: string) => request<void>("/api/v1/logout", { method: "POST", headers: { "X-CSRF-Token": csrf } }),
   dashboard: (range = "24h") => request<Dashboard>(`/api/v1/dashboard${query({ range })}`),
   commands: () => request<Page<CommandItem>>("/api/v1/commands"),
+  commandActivity: () => request<Page<CommandActivity>>("/api/v1/command-activity"),
+  previewMail: (raw: string) => request<MailPreview>("/api/v1/mail/preview", { method: "POST", body: JSON.stringify({ raw }) }),
   configDraft: () => request<ConfigDraft>("/api/v1/config/draft"),
   saveConfig: (draft: ConfigDraft, csrf: string) =>
     request<{ status: string }>("/api/v1/config/draft", { method: "PUT", body: JSON.stringify(draft), headers: { "X-CSRF-Token": csrf } }),

@@ -166,7 +166,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 	}()
 
 	server := &http.Server{
-		Handler:           webconsole.NewServer(webconsole.ServerOptions{Sessions: sessions, Repository: r.newRepository(commands), Editor: r}),
+		Handler:           webconsole.NewServer(webconsole.ServerOptions{Sessions: sessions, Repository: r.newRepository(commands), Editor: r, Previewer: r}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -409,6 +409,17 @@ func (r *Runtime) newRepository(commands []command.Command) *webconsole.Reposito
 // tokens intact. Implements webconsole.Editor.
 func (r *Runtime) LoadDraft() (config.Draft, error) {
 	return config.LoadDraft(r.path)
+}
+
+// PreviewMail implements webconsole.Previewer. It deliberately stops before
+// handler execution, so the console can explain an email's routing outcome
+// without external side effects or durable writes.
+func (r *Runtime) PreviewMail(_ context.Context, raw string) webconsole.MailPreview {
+	result := r.app.PreviewMail(raw)
+	return webconsole.MailPreview{
+		Accepted: result.Accepted, Stage: result.Stage, Command: result.Command,
+		Handler: result.Handler, Parameters: result.Parameters, ErrorKind: result.ErrorKind,
+	}
 }
 
 // ApplyDraft validates a console edit against the FULL config, persists it with

@@ -89,6 +89,39 @@ func TestRoutesRejectMalformedFiltersAndMethods(t *testing.T) {
 	}
 }
 
+type fakePreviewer struct {
+	raw string
+}
+
+func (f *fakePreviewer) PreviewMail(_ context.Context, raw string) MailPreview {
+	f.raw = raw
+	return MailPreview{Accepted: true, Stage: "ready", Command: "push", Handler: "http", Parameters: []string{"message"}}
+}
+
+func TestMailPreviewRequiresSessionAndNeverExecutes(t *testing.T) {
+	sessions, _ := newTestSessions(t)
+	previewer := &fakePreviewer{}
+	h := NewServer(ServerOptions{Sessions: sessions, Repository: seededRepository(t), Previewer: previewer})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/mail/preview", strings.NewReader(`{"raw":"From: me@example.com"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized || previewer.raw != "" {
+		t.Fatalf("unauthenticated status=%d raw=%q", w.Code, previewer.raw)
+	}
+
+	cookie, _ := loginForTest(t, h)
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/mail/preview", strings.NewReader(`{"raw":"From: me@example.com\nSubject: push\n\n_token=secret"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || previewer.raw == "" || !strings.Contains(w.Body.String(), `"accepted":true`) {
+		t.Fatalf("preview status=%d body=%s raw=%q", w.Code, w.Body.String(), previewer.raw)
+	}
+}
+
 func TestServerEmbedsSPAAndFallsBackForClientRoutes(t *testing.T) {
 	h := newTestServer(t)
 	for _, target := range []string{"/", "/executions"} {

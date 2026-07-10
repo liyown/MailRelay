@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
+import { MagicWand } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { ParameterEditor, type ParameterRow, rowsToParams, paramsToRows, emptyRow } from "./ParameterEditor";
+import { ParameterEditor, type ParameterRow, rowsToParams, paramsToRows } from "./ParameterEditor";
 import { EmailPreview } from "./EmailPreview";
 import { HttpConfig } from "./config/HttpConfig";
+import { HTTP_TEMPLATES, type HTTPTemplate } from "./config/httpTemplates";
 import { HttpRequestConfig } from "./config/HttpRequestConfig";
 import { WebhookConfig } from "./config/WebhookConfig";
 import { WorkflowConfig } from "./config/WorkflowConfig";
@@ -38,6 +40,7 @@ export function CommandEditor({
   existingCommands,
   httpHosts,
   token,
+  onAddHTTPHost,
   onClose,
   onSave,
 }: {
@@ -46,6 +49,7 @@ export function CommandEditor({
   existingCommands: CommandDetail[];
   httpHosts: string[];
   token: string;
+  onAddHTTPHost: (host: string) => void;
   onClose: () => void;
   onSave: (command: CommandDetail) => void;
 }) {
@@ -56,6 +60,7 @@ export function CommandEditor({
   const [handler, setHandler] = useState("http");
   const [paramRows, setParamRows] = useState<ParameterRow[]>([]);
   const [config, setConfig] = useState<Record<string, unknown>>({});
+  const [configRevision, setConfigRevision] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -67,10 +72,26 @@ export function CommandEditor({
     setHandler(initial?.handler ?? "http");
     setParamRows(paramsToRows(initial?.parameters));
     setConfig(initial?.config ? { ...(initial.config as Record<string, unknown>) } : {});
+    setConfigRevision(0);
   }, [open, initial]);
 
   const existingNames = existingCommands.map((c) => c.name);
   const paramNames = paramRows.filter((r) => r.name.trim()).map((r) => r.name.trim());
+
+  const applyHTTPTemplate = (template: HTTPTemplate, options?: { fillBasics?: boolean }) => {
+    setHandler("http");
+    setConfig({ ...template.config });
+    setConfigRevision((revision) => revision + 1);
+    if (options?.fillBasics) {
+      setName((current) => current || template.commandName);
+      setDescription((current) => current || template.commandDescription);
+    }
+    setParamRows((rows) => {
+      const existing = new Set(rows.map((row) => row.name.trim()).filter(Boolean));
+      const missing = template.params.filter((row) => !existing.has(row.name));
+      return [...rows, ...missing];
+    });
+  };
 
   const submit = () => {
     if (!NAME_PATTERN.test(name) || name === "help") {
@@ -99,12 +120,23 @@ export function CommandEditor({
   // configKey unmounts and remounts the handler-specific form each time the
   // editor opens or switches to a different command, resetting any local row
   // state (headers, args, env) that lives inside the form component.
-  const configKey = `${handler}:${isNew ? "new" : (initial?.name ?? "edit")}:${open ? "open" : "closed"}`;
+  const configKey = `${handler}:${isNew ? "new" : (initial?.name ?? "edit")}:${open ? "open" : "closed"}:${configRevision}`;
 
   const configForm = () => {
     switch (handler) {
       case "http":
-        return <HttpConfig key={configKey} config={config} setConfig={setConfig} paramNames={paramNames} httpHosts={httpHosts} />;
+        return (
+          <HttpConfig
+            key={configKey}
+            config={config}
+            setConfig={setConfig}
+            paramNames={paramNames}
+            paramRows={paramRows}
+            httpHosts={httpHosts}
+            onApplyTemplate={applyHTTPTemplate}
+            onAddHTTPHost={onAddHTTPHost}
+          />
+        );
       case "http_request":
         return <HttpRequestConfig key={configKey} config={config} setConfig={setConfig} />;
       case "webhook":
@@ -144,6 +176,33 @@ export function CommandEditor({
           {/* Tab 1 — 基本信息 */}
           <TabsContent value="basic" className="min-h-0 overflow-y-auto pr-1">
             <div className="grid gap-4 py-2">
+              {isNew && (
+                <div className="grid gap-2 rounded-lg border border-border bg-muted/20 p-3">
+                  <div>
+                    <Label className="text-sm">从 API Action 模板开始</Label>
+                    <p className="mt-0.5 text-xs text-muted-foreground">选中后填入 HTTP 命令、参数和配置，接着核对请求预览。</p>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    {HTTP_TEMPLATES.map((template) => (
+                      <button
+                        key={template.id}
+                        type="button"
+                        className="rounded-lg border border-border bg-background p-3 text-left transition hover:border-primary/40 hover:bg-primary/5"
+                        onClick={() => {
+                          applyHTTPTemplate(template, { fillBasics: true });
+                          setTab("config");
+                        }}
+                      >
+                        <span className="mb-1 flex items-center gap-1.5 text-sm font-medium">
+                          <MagicWand className="size-3.5 text-primary" />
+                          {template.title}
+                        </span>
+                        <span className="block text-xs leading-relaxed text-muted-foreground">{template.description}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="grid gap-1.5">
                 <Label htmlFor="cmd-name">命令名称</Label>
                 <Input
